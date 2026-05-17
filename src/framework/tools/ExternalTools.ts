@@ -1,6 +1,10 @@
 import { z } from 'zod';
-import { globalToolRegistry } from './ToolRegistry.ts';
-import { globalEventStore } from '../core/EventStore.ts';
+import * as fs from 'fs';
+import * as path from 'path';
+import { globalToolRegistry } from './ToolRegistry.js';
+import { globalEventStore } from '../core/EventStore.js';
+
+const workspaceRoot = path.join(process.cwd(), 'workspace');
 
 // 1. Web Search Tool
 globalToolRegistry.register(
@@ -99,26 +103,50 @@ globalToolRegistry.register(
 // 5. File System Read
 globalToolRegistry.register(
     'fileSystemRead',
-    'Read the contents of a file from the virtual file system.',
+    'Read the contents of a file from the workspace file system.',
     z.object({
-        filePath: z.string().describe('Absolute or relative path to the file')
+        filePath: z.string().describe('Relative path to the file within the workspace')
     }),
     async ({ filePath }) => {
         globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'fileSystemRead', filePath } });
-        return `[Simulated File Content for ${filePath}]:\n// Read-only mock data\nexport const config = "loaded";`;
+        
+        const absolutePath = path.join(workspaceRoot, filePath);
+        if (!absolutePath.startsWith(workspaceRoot)) {
+            return `[File System Error]: Access denied to ${filePath}. Path must be within workspace.`;
+        }
+        
+        if (!fs.existsSync(absolutePath)) {
+            return `[File System Error]: File not found: ${filePath}`;
+        }
+        
+        const content = fs.readFileSync(absolutePath, 'utf8');
+        return content;
     }
 );
 
 // 6. File System Write
 globalToolRegistry.register(
     'fileSystemWrite',
-    'Write contents to a file in the virtual file system.',
+    'Write contents to a file in the workspace file system.',
     z.object({
-        filePath: z.string().describe('Path to the file to create or overwrite'),
+        filePath: z.string().describe('Relative path to the file to create or overwrite'),
         content: z.string().describe('Content to write into the file')
     }),
     async ({ filePath, content }) => {
         globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'fileSystemWrite', filePath, length: content.length } });
+        
+        const absolutePath = path.join(workspaceRoot, filePath);
+        if (!absolutePath.startsWith(workspaceRoot)) {
+            return `[File System Error]: Access denied to ${filePath}. Path must be within workspace.`;
+        }
+        
+        // Ensure directory exists
+        const dir = path.dirname(absolutePath);
+        if (!fs.existsSync(dir)) {
+             fs.mkdirSync(dir, { recursive: true });
+        }
+        
+        fs.writeFileSync(absolutePath, content || '', 'utf8');
         return `Successfully wrote ${content.length} characters to ${filePath}.`;
     }
 );

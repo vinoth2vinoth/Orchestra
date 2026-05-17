@@ -30,6 +30,7 @@ import { PlannerAgent } from './src/framework/agents/PlannerAgent.js';
 import { ProviderRegistry } from './src/framework/llm/ProviderRegistry.js';
 import { GoogleGenAI } from '@google/genai';
 import { globalWorkerPool } from './src/framework/WorkerPool.js';
+import { AutonomousDaemon } from './src/framework/orchestration/AutonomousDaemon.js';
 
 // Bootstrap Enterprise Features (DLP, Token Budget, Semantic Cache, Audit, Metrics)
 registerEnterpriseFeatures();
@@ -48,6 +49,10 @@ async function startServer() {
   
   // Initialize Distributed Workers
   globalWorkerPool.init(3);
+
+  // Initialize Autonomous Daemon
+  const daemon = new AutonomousDaemon(10000); // Poll every 10s
+  daemon.start();
 
   // SSE streaming endpoint for telemetry
   app.get('/api/events', (req, res) => {

@@ -223,6 +223,28 @@ export default function App() {
 
   const isRequestInFlight = useRef(false);
 
+  // Global event listener for cross-component interactions
+  useEffect(() => {
+     const handleDelegate = (e: Event) => {
+         const customEvent = e as CustomEvent;
+         if (customEvent.detail && customEvent.detail.prompt) {
+             setViewMode('chat');
+             
+             // Queue message
+             setMessages(prev => [...prev, {
+                 id: crypto.randomUUID(),
+                 senderName: 'User',
+                 senderRole: 'User',
+                 text: customEvent.detail.prompt,
+                 timestamp: Date.now()
+             }]);
+             setIsProcessing(true);
+         }
+     };
+     window.addEventListener('delegate-to-swarm', handleDelegate);
+     return () => window.removeEventListener('delegate-to-swarm', handleDelegate);
+  }, []);
+
   // Main orchestration logic
   useEffect(() => {
     if (!isProcessing || isRequestInFlight.current) return;
@@ -241,10 +263,17 @@ export default function App() {
 
         const transcript = messages.map(m => `[${m.senderName}]: ${m.text}`).join('\n\n');
 
+        const systemContext = `You are the Maestro/Orchestrator.
+CRITICAL CONTEXT: 
+- Local project management data (projects and tasks) is persisted in the workspace at "projects.json".
+- To interact with project tasks (e.g. read the board, change a status, create a task), instruct your agents to use the 'fileSystemRead' and 'fileSystemWrite' tools on "projects.json".
+- Assume the user considers you directly capable of managing their projects through these files.`;
+
         const orchestratorResponse = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            systemInstruction: systemContext,
             prompt: transcript,
             agentDefinitions: agents,
             paradigm: paradigm,

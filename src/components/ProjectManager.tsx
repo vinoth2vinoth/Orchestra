@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Briefcase, Plus, Trash2, Calendar, User, CheckCircle2, Circle, ArrowRight, Columns, BarChart, Clock, MoreVertical, Edit2, X, List, Search, Filter } from 'lucide-react';
+import { Briefcase, Plus, Trash2, Calendar, User, CheckCircle2, Circle, ArrowRight, Columns, BarChart, Clock, MoreVertical, Edit2, X, List, Search, Filter, Bot } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 
@@ -53,24 +53,31 @@ export function ProjectManager() {
   const [taskFormPriority, setTaskFormPriority] = useState<TaskPriority>('MEDIUM');
 
   // Setup: Load data from Workspace API
-  useEffect(() => {
-    const fetchProjects = async () => {
-      try {
-        setIsLoading(true);
-        const res = await fetch(`/api/workspace/file?path=${STORAGE_PATH}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.content) {
-            setProjects(JSON.parse(data.content));
-          }
+  const fetchProjects = async (silent = false) => {
+    try {
+      if (!silent) setIsLoading(true);
+      const res = await fetch(`/api/workspace/file?path=${STORAGE_PATH}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.content) {
+          setProjects(JSON.parse(data.content));
         }
-      } catch (err) {
-        console.error('Failed to load projects', err);
-      } finally {
-        setIsLoading(false);
       }
-    };
+    } catch (err) {
+      console.error('Failed to load projects', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchProjects();
+    
+    // Periodically poll for background changes made by the AI Agent
+    const interval = setInterval(() => {
+        fetchProjects(true);
+    }, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   const saveProjects = async (updatedProjects: Project[]) => {
@@ -226,6 +233,11 @@ export function ProjectManager() {
   };
 
   const activeProject = projects.find(p => p.id === activeProjectId);
+
+  const delegateTaskToSwarm = (project: Project, task: Task) => {
+    const prompt = `Please handle this task from project "${project.name}":\n\nTask: ${task.title}\nDescription: ${task.description || ''}\n\nPriority: ${task.priority || 'MEDIUM'}\nAssignee: ${task.assignee || 'None'}\nDeadline: ${task.deadline || 'None'}\n\nEvaluate what needs to be done, take action, and update the status in projects.json when complete.`;
+    window.dispatchEvent(new CustomEvent('delegate-to-swarm', { detail: { prompt } }));
+  };
 
   const filteredTasks = useMemo(() => {
     if (!activeProject) return [];
@@ -475,10 +487,13 @@ export function ProjectManager() {
                                     className="bg-slate-900 p-4 rounded-lg border border-slate-700 hover:border-blue-500 hover:shadow-[0_4px_20px_rgba(59,130,246,0.1)] transition-all cursor-grab active:cursor-grabbing group relative"
                                   >
                                      <div className="absolute top-2 right-2 flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                       <button onClick={() => openEditTaskModal(task)} className="p-1 text-slate-500 hover:text-blue-400 rounded hover:bg-slate-800">
+                                       <button onClick={() => delegateTaskToSwarm(activeProject, task)} className="p-1 text-slate-500 hover:text-indigo-400 rounded hover:bg-slate-800" title="Delegate to AI Swarm">
+                                          <Bot className="w-3.5 h-3.5" />
+                                       </button>
+                                       <button onClick={() => openEditTaskModal(task)} className="p-1 text-slate-500 hover:text-blue-400 rounded hover:bg-slate-800" title="Edit Task">
                                           <Edit2 className="w-3.5 h-3.5" />
                                        </button>
-                                       <button onClick={() => deleteTask(activeProject.id, task.id)} className="p-1 text-slate-500 hover:text-rose-400 rounded hover:bg-slate-800">
+                                       <button onClick={() => deleteTask(activeProject.id, task.id)} className="p-1 text-slate-500 hover:text-rose-400 rounded hover:bg-slate-800" title="Delete Task">
                                           <X className="w-3.5 h-3.5" />
                                        </button>
                                      </div>
@@ -576,10 +591,13 @@ export function ProjectManager() {
                              </td>
                              <td className="px-4 py-3 text-right">
                                <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                 <button onClick={() => openEditTaskModal(task)} className="p-1.5 text-slate-400 hover:text-blue-400 rounded hover:bg-slate-800">
+                                 <button onClick={() => delegateTaskToSwarm(activeProject, task)} className="p-1.5 text-slate-400 hover:text-indigo-400 rounded hover:bg-slate-800" title="Delegate to AI Swarm">
+                                    <Bot className="w-3.5 h-3.5" />
+                                 </button>
+                                 <button onClick={() => openEditTaskModal(task)} className="p-1.5 text-slate-400 hover:text-blue-400 rounded hover:bg-slate-800" title="Edit Task">
                                     <Edit2 className="w-3.5 h-3.5" />
                                  </button>
-                                 <button onClick={() => deleteTask(activeProject.id, task.id)} className="p-1.5 text-slate-400 hover:text-rose-400 rounded hover:bg-slate-800">
+                                 <button onClick={() => deleteTask(activeProject.id, task.id)} className="p-1.5 text-slate-400 hover:text-rose-400 rounded hover:bg-slate-800" title="Delete Task">
                                     <X className="w-3.5 h-3.5" />
                                  </button>
                                </div>
