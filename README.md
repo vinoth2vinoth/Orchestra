@@ -63,31 +63,79 @@ We designed Orchestra to solve the most prevalent challenges in current open-sou
 <summary><strong>View System Diagram Source (Mermaid)</strong></summary>
 
 ```mermaid
-graph TD;
-    A[Frontend UI / Client] -->|Task Submission via REST/WS| B(Orchestrator Node);
+graph TB
+    subgraph Client_Layer [Interaction Layer]
+        A[Frontend React Dashboard]
+        B[Autonomous Daemons]
+        C[External API Clients]
+    end
 
-    %% Event Sourcing & Memory
-    B -->|Logs Immutable Event| C[(EventStore & OpenTelemetry)];
-    B <-->|RAG & Context| M[(Memory Mesh: Short/Long Term)];
+    subgraph Orchestration_Layer [Control Plane]
+        D[Orchestrator Node]
+        E{Paradigm Router}
+        F[Agent Registry]
+        G[Memory Mesh]
+    end
 
-    %% Message Queue
-    B -->|Publishes Task Payload| D((Distributed Message Bus / Redis Queue));
+    subgraph Execution_Layer [Distributed Worker Pool]
+        H((Message Bus))
+        I[Worker: Code Gen]
+        J[Worker: Auditor]
+        K[Worker: Researcher]
+    end
 
-    %% Execution Layer
-    D -->|Pulls Task| E[Worker Node 1: Code Gen];
-    D -->|Pulls Task| F[Worker Node 2: QA Auditor];
-    D -->|Pulls Task| G[Autonomous Daemon: CI/CD];
+    subgraph Governance_Layer [Security & Validation]
+        L[Tool Registry]
+        M[Zod Schema Enforcer]
+        N[RBAC Policy Engine]
+    end
 
-    %% Tool & Governance Verification
-    E <-->|Requests Tool Execution| H(ToolRegistry & Zod Validator);
-    H <-->|Check Permissions| S(RBAC & Governance Engine);
+    subgraph Persistence_Layer [State & Telemetry]
+        O[(Event Store)]
+        P[(State Checkpoints)]
+        Q[(Vector / Long-term Memory)]
+    end
 
-    %% Checkpoint Resilience
-    E -->|Flushes Final State| I[(Persistent State / SQLite Checkpoints)];
-    F -->|Flushes Final State| I;
+    subgraph Provider_Layer [LLM Intelligence]
+        R[Google Gemini]
+        S[OpenAI / Anthropic]
+        T[Local Models]
+    end
+
+    %% Flow
+    A & B & C --> D
+    D --> E
+    E -->|Swarm / Hierarchical / Consensus| F
+    F <--> G
+    D -->|Task Payload| H
+    H --> I & J & K
+    
+    I & J & K <--> L
+    L --> M --> N
+    
+    I & J & K -->|State Updates| P
+    D -->|Immutable Logs| O
+    G <--> Q
+    
+    I & J & K <-->|Inference| R & S & T
+
+    %% Feedback loops
+    J -->|Audit Feedback| I
+    P -->|Rehydration| D
 ```
 
 </details>
+
+### 🏗️ The Four Pillars of Orchestra Architecture
+
+To achieve enterprise-grade reliability, Orchestra is built upon four fundamental architectural pillars:
+
+1.  **Distributed Control Plane**: The `Orchestrator` acts as a stateless brain, delegating high-level reasoning to the `Paradigm Router`. It doesn't execute code itself; instead, it coordinates the lifecycle of complex tasks across Swarm, Hierarchical, and Consensus-driven workflows.
+2.  **Autonomous Worker Pools**: Execution is entirely decoupled from the UI. `WorkerNodes` and `AutonomousDaemons` pull specialized tasks from the `Message Bus` (Pub/Sub). This allows the system to scale workers horizontally and recover from individual node failures without losing the global task context.
+3.  **Strict Governance & Tool Sandboxing**: Every tool an agent consumes is wrapped in a `Zod Schema`. The `Governance Engine` enforces RBAC (Role-Based Access Control) and resource budgets at the tool-call level, preventing unauthorized file system access or uncontrolled API spending.
+4.  **Idempotent State Rehydration**: Through `Persistent State Checkpoints`, Orchestra tracks the "thought history" of every agent. If a network error occurs or the process restarts, the Orchestrator can rehydrate the exact state and resume the task precisely where it left off.
+
+---
 
 ### 💻 Example: Launching an Agent
 

@@ -1,0 +1,26 @@
+{
+  "projects": [
+    {
+      "id": "p1",
+      "name": "Orchestra Core v2.0",
+      "description": "Next-gen distributed multi-agent swarm framework.",
+      "status": "ACTIVE",
+      "tasks": [
+        {
+          "id": "t1",
+          "title": "Implement Project Board Tool",
+          "status": "IN_PROGRESS",
+          "assignee": "Architect",
+          "priority": "HIGH"
+        },
+        {
+          "id": "t2",
+          "title": "Setup Telemetry Neural Mesh",
+          "status": "TODO",
+          "assignee": "Developer",
+          "priority": "MEDIUM"
+        }
+      ]
+    }
+  ]
+}

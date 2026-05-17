@@ -3,8 +3,8 @@ import { Briefcase, Plus, Trash2, Calendar, User, CheckCircle2, Circle, ArrowRig
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 
-export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'DONE';
-export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH';
+export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'DONE' | 'BLOCKED' | 'REVIEW';
+export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface Task {
   id: string;
@@ -26,7 +26,7 @@ export interface Project {
 
 const STORAGE_PATH = 'projects.json';
 
-export function ProjectManager() {
+export function ProjectManager({ liveLogs = [] }: { liveLogs?: any[] }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -60,7 +60,8 @@ export function ProjectManager() {
       if (res.ok) {
         const data = await res.json();
         if (data.content) {
-          setProjects(JSON.parse(data.content));
+          const parsed = JSON.parse(data.content);
+          setProjects(parsed.projects || (Array.isArray(parsed) ? parsed : []));
         }
       }
     } catch (err) {
@@ -88,7 +89,7 @@ export function ProjectManager() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           path: STORAGE_PATH,
-          content: JSON.stringify(updatedProjects, null, 2)
+          content: JSON.stringify({ projects: updatedProjects }, null, 2)
         })
       });
     } catch (err) {
@@ -168,20 +169,20 @@ export function ProjectManager() {
 
   const saveTask = () => {
     if (!taskFormTitle.trim() || !activeProjectId) return;
-    const updatedProjects = projects.map(p => {
+    const updatedProjects: Project[] = projects.map(p => {
       if (p.id === activeProjectId) {
         if (editingTask) {
           // Update existing task
           return {
             ...p,
-            tasks: p.tasks.map(t => t.id === editingTask.id ? {
+            tasks: p.tasks.map(t => t.id === editingTask.id ? ({
               ...t,
               title: taskFormTitle.trim(),
               description: taskFormDesc.trim(),
               assignee: taskFormAssignee.trim(),
               deadline: taskFormDeadline,
               priority: taskFormPriority
-            } : t)
+            } as Task) : t)
           };
         } else {
           // Create new task
@@ -195,7 +196,7 @@ export function ProjectManager() {
               priority: taskFormPriority,
               assignee: taskFormAssignee.trim(),
               deadline: taskFormDeadline
-            }]
+            } as Task]
           };
         }
       }
@@ -207,11 +208,11 @@ export function ProjectManager() {
   };
 
   const updateTaskStatus = (projectId: string, taskId: string, newStatus: TaskStatus) => {
-    const updatedProjects = projects.map(p => {
+    const updatedProjects: Project[] = projects.map(p => {
       if (p.id === projectId) {
         return {
           ...p,
-          tasks: p.tasks.map(t => t.id === taskId ? { ...t, status: newStatus } : t)
+          tasks: p.tasks.map(t => t.id === taskId ? ({ ...t, status: newStatus } as Task) : t)
         };
       }
       return p;
@@ -443,7 +444,7 @@ export function ProjectManager() {
 
                {viewStyle === 'board' ? (
                <div className="flex-1 flex gap-6 overflow-x-auto custom-scrollbar pb-4">
-                  {(['TODO', 'IN_PROGRESS', 'DONE'] as TaskStatus[]).map((colStatus) => {
+                  {(['TODO', 'IN_PROGRESS', 'REVIEW', 'BLOCKED', 'DONE'] as TaskStatus[]).map((colStatus) => {
                      const colTasks = filteredTasks.filter(t => t.status === colStatus);
                      let title = "To Do";
                      let icon = <Circle className="w-4 h-4 text-slate-500" />;
@@ -452,6 +453,14 @@ export function ProjectManager() {
                         title = "In Progress";
                         icon = <Clock className="w-4 h-4 text-amber-500" />;
                         headerColor = "text-amber-400 border-amber-500/20 bg-amber-500/5";
+                     } else if (colStatus === 'REVIEW') {
+                        title = "Code Review";
+                        icon = <Search className="w-4 h-4 text-indigo-500" />;
+                        headerColor = "text-indigo-400 border-indigo-500/20 bg-indigo-500/5";
+                     } else if (colStatus === 'BLOCKED') {
+                        title = "Blocked";
+                        icon = <X className="w-4 h-4 text-rose-500" />;
+                        headerColor = "text-rose-400 border-rose-500/20 bg-rose-500/5";
                      } else if (colStatus === 'DONE') {
                         title = "Done";
                         icon = <CheckCircle2 className="w-4 h-4 text-emerald-500" />;
@@ -664,6 +673,7 @@ export function ProjectManager() {
                             <option value="LOW">Low</option>
                             <option value="MEDIUM">Medium</option>
                             <option value="HIGH">High</option>
+                            <option value="CRITICAL">Critical</option>
                           </select>
                        </div>
                        <div>
@@ -691,6 +701,40 @@ export function ProjectManager() {
          )}
       </AnimatePresence>
 
+      {/* SWARM ACTIVITY FEED SIDEBAR */}
+      <div className="absolute top-14 right-0 bottom-0 w-80 border-l border-slate-800 bg-slate-950/50 backdrop-blur-md z-30 hidden xl:flex flex-col">
+         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+               <Bot className="w-4 h-4 text-indigo-400" /> Swarm Activity
+            </h3>
+            <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 animate-pulse">Live</span>
+         </div>
+         <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+            {liveLogs.filter(log => log.payload?.action?.includes('TASK') || log.sourceAgentId === 'PROJECT_SERVICE').length === 0 ? (
+               <div className="flex flex-col items-center justify-center py-20 text-slate-600 text-center px-4">
+                  <div className="w-10 h-10 bg-slate-900 rounded-full flex items-center justify-center mb-3">
+                     <Clock className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs">No project-related agent activity detected yet.</p>
+               </div>
+            ) : (
+               liveLogs.filter(log => log.payload?.action?.includes('TASK') || log.sourceAgentId === 'PROJECT_SERVICE').reverse().map((log: any, i: number) => (
+                  <motion.div 
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    key={i} 
+                    className="p-3 bg-slate-900/50 border border-slate-800 rounded-lg text-xs"
+                  >
+                     <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold text-indigo-400">{log.sourceAgentId}</span>
+                        <span className="text-[10px] text-slate-600 font-mono">{new Date().toLocaleTimeString()}</span>
+                     </div>
+                     <p className="text-slate-300 leading-relaxed italic">"{log.payload?.text || log.payload?.action}"</p>
+                  </motion.div>
+               ))
+            )}
+         </div>
+      </div>
     </div>
   );
 }

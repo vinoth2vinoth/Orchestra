@@ -21,6 +21,7 @@ import { InfraStressor } from './src/framework/testing/Stressor.js';
 import { globalEscalationManager } from './src/framework/governance/EscalationManager.js';
 import { globalPluginRegistry, AgenticPlugin } from './src/framework/core/PluginRegistry.js';
 import './src/framework/tools/ExternalTools.js';
+import './src/framework/tools/ProjectBoardTool.js';
 import { MCPClient } from './src/framework/tools/MCPClient.js';
 
 import { registerEnterpriseFeatures, MetricsExportPlugin } from './src/framework/plugins/EnterpriseFeatures.js';

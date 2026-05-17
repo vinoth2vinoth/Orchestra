@@ -6,6 +6,31 @@ The traditional, naive approach to designing multi-agent memory is to simply app
 
 Orchestra solves this major engineering issue efficiently through an advanced, multi-tiered **Memory Mesh**.
 
+<div align="center">
+
+```mermaid
+graph TD
+    subgraph Episodic_Memory [Short-Term / Thread Bounds]
+        A[Goal Injection] --> B[Sliding Window Filter]
+        B --> C[Thread-Isolated Context]
+    end
+
+    subgraph Semantic_Memory [Long-Term / Global Learnings]
+        D[Task Observations] --> E[Vector Indexing]
+        E --> F[Experience Retrieval]
+    end
+
+    subgraph Collaborative_Memory [Shared Blackboard]
+        G[Worker 1] & H[Worker 2] --> I[(Shared JSON State)]
+        I --> J[Global Ground Truth]
+    end
+
+    C & F & J --> K[Augmented Prompt]
+    K --> L[LLM Inference]
+```
+
+</div>
+
 ## Short-Term Episodic Memory (Thread Bounds)
 
 Each distinct user objective, task, or agent conversational thread is automatically assigned a unique, isolated UUID (`threadId`). Short-term memory acts as the classic "conversation history", but heavily optimized and sandboxed.

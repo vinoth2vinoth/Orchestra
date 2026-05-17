@@ -265,9 +265,9 @@ export default function App() {
 
         const systemContext = `You are the Maestro/Orchestrator.
 CRITICAL CONTEXT: 
-- Local project management data (projects and tasks) is persisted in the workspace at "projects.json".
-- To interact with project tasks (e.g. read the board, change a status, create a task), instruct your agents to use the 'fileSystemRead' and 'fileSystemWrite' tools on "projects.json".
-- Assume the user considers you directly capable of managing their projects through these files.`;
+- Local project management data is available via specialized tools: 'getProjectBoard', 'updateTaskStatus', and 'createProjectTask'.
+- Use these tools to interact with the project board natively. The data is persisted in "projects.json".
+- Assume the user considers you directly capable of managing their projects through these high-level actions.`;
 
         const orchestratorResponse = await fetch('/api/chat', {
           method: 'POST',
@@ -768,7 +768,7 @@ CRITICAL CONTEXT:
       )}
 
       {viewMode === 'projects' && (
-        <ProjectManager />
+        <ProjectManager liveLogs={liveLogs} />
       )}
 
       {/* Main Chat Area */}

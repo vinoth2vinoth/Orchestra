@@ -56,7 +56,8 @@ export class AutonomousDaemon {
         let dataStr = fs.readFileSync(absolutePath, 'utf8');
         if (!dataStr) return;
 
-        let projects: any[] = JSON.parse(dataStr);
+        const root = JSON.parse(dataStr);
+        const projects = root.projects || [];
         let changesMade = false;
 
         for (const project of projects) {
@@ -87,7 +88,7 @@ export class AutonomousDaemon {
         }
 
         if (changesMade) {
-            fs.writeFileSync(absolutePath, JSON.stringify(projects, null, 2), 'utf8');
+            fs.writeFileSync(absolutePath, JSON.stringify(root, null, 2), 'utf8');
         }
     }
 
@@ -134,7 +135,8 @@ export class AutonomousDaemon {
         if (!fs.existsSync(absolutePath)) return;
 
         let dataStr = fs.readFileSync(absolutePath, 'utf8');
-        let projects: any[] = JSON.parse(dataStr);
+        const root = JSON.parse(dataStr);
+        const projects = root.projects || [];
         let updated = false;
 
         const conclusionStr = typeof daemonConclusion === 'string' ? daemonConclusion : JSON.stringify(daemonConclusion);
@@ -152,7 +154,7 @@ export class AutonomousDaemon {
         }
 
         if (updated) {
-           fs.writeFileSync(absolutePath, JSON.stringify(projects, null, 2), 'utf8');
+           fs.writeFileSync(absolutePath, JSON.stringify(root, null, 2), 'utf8');
            console.log(`[AutonomousDaemon] Finalized task ${taskId}`);
         }
     }
