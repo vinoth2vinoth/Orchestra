@@ -1,14 +1,19 @@
 <div align="center">
   
-# 🎻 Orchestra: Enterprise Multi-Agent AI Framework
+<img src="./assets/hero-banner.svg" alt="Orchestra Banner" width="100%" />
+<br />
+
+# 🎻 Orchestra: Enterprise AI Agent Framework
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](#)
-[![Deployment](https://img.shields.io/badge/Production-Ready-success.svg)](#)
+[![Status](https://img.shields.io/badge/Status-Early_Development-yellow.svg)](#)
 [![Framework](https://img.shields.io/badge/Agentic-Workflow-orange.svg)](#)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
-_An advanced, production-ready TypeScript framework for building, managing, and scaling autonomous AI agent swarms and agentic workflows._
+_An advanced TypeScript framework for building, managing, and scaling autonomous AI agent swarms and agentic workflows._
+
+> **Note:** Orchestra is currently in an early development stage. We are still perfecting the underlying architecture. A working prototype is available to run and test, but it is not perfect.
 
 </div>
 
@@ -17,6 +22,14 @@ Welcome to **Orchestra**, the definitive enterprise-grade **Multi-Agent AI Frame
 Orchestra goes beyond basic chat-bot wrappers by implementing a robust, distributed architecture that features **self-healing worker pools**, **autonomous background daemons**, **state checkpointing**, and **enterprise-grade security governance**. It is engineered from the ground up to orchestrate dozens of intelligent micro-agents to cooperatively execute complex, multi-layered tasks across autonomous swarm environments.
 
 If you are looking to build responsive, robust, and infinitely scalable **Agentic AI systems**, you're in the right place.
+
+---
+
+## 📖 Origin Story: Why We Built Orchestra
+
+We love the current open-source agent ecosystems, but we found ourselves constantly hitting a wall when moving prototypes to production. We got tired of agents getting stuck in infinite reflection loops, silently failing during temporary API rate limits, and racking up massive $500 LLM bills over the weekend because a recursive worker forgot to terminate. Existing monolithic chat wrappers are incredible for local tinkering, but they lack the rigid governance, asynchronous state recovery, and distributed worker resiliency required by complex enterprise architectures.
+
+Orchestra was explicitly born out of this frustration. We didn't want another chatbot framework; we wanted a robust, cloud-native orchestration layer. We engineered Orchestra around core principles of modern infrastructure—distributed message buses, background daemons, strict schema validations, and idempotent state checkpointing. Our goal is to ensure your AI swarms operate with the exact same reliability as a traditional microservice, turning unpredictable LLM workflows into deterministic, auditable software.
 
 ---
 
@@ -42,39 +55,77 @@ We designed Orchestra to solve the most prevalent challenges in current open-sou
 
 ## 🧠 How It Works (Architecture Overview)
 
+<div align="center">
+  <img src="./assets/architecture-diagram.svg" alt="Detailed Network Architecture Diagram" width="100%" />
+</div>
+
+<details>
+<summary><strong>View System Diagram Source (Mermaid)</strong></summary>
+
 ```mermaid
 graph TD;
-    A[Frontend UI / Client] -->|Task Submission| B(Orchestrator Node);
-    B -->|Logs Event| C[(EventStore & Telemetry)];
-    B -->|Publishes Task| D((Message Bus / Queue));
-    D -->|Consumes| E[Worker Node 1];
-    D -->|Consumes| F[Worker Node 2];
-    D -->|Consumes| G[Background Daemon];
-    E <-->|Tool Execution| H(ToolRegistry & Zod);
-    E <-->|State Checkpoints| I[(Persistent State)];
+    A[Frontend UI / Client] -->|Task Submission via REST/WS| B(Orchestrator Node);
+
+    %% Event Sourcing & Memory
+    B -->|Logs Immutable Event| C[(EventStore & OpenTelemetry)];
+    B <-->|RAG & Context| M[(Memory Mesh: Short/Long Term)];
+
+    %% Message Queue
+    B -->|Publishes Task Payload| D((Distributed Message Bus / Redis Queue));
+
+    %% Execution Layer
+    D -->|Pulls Task| E[Worker Node 1: Code Gen];
+    D -->|Pulls Task| F[Worker Node 2: QA Auditor];
+    D -->|Pulls Task| G[Autonomous Daemon: CI/CD];
+
+    %% Tool & Governance Verification
+    E <-->|Requests Tool Execution| H(ToolRegistry & Zod Validator);
+    H <-->|Check Permissions| S(RBAC & Governance Engine);
+
+    %% Checkpoint Resilience
+    E -->|Flushes Final State| I[(Persistent State / SQLite Checkpoints)];
+    F -->|Flushes Final State| I;
 ```
+
+</details>
 
 ### 💻 Example: Launching an Agent
 
 ```typescript
-import { Orchestrator } from "orchestra-framework/orchestration";
+import { Orchestrator, SwarmParadigm } from "orchestra-framework/orchestration";
 import { BaseAgent } from "orchestra-framework/agents";
 
-// 1. Initialize our specialized worker agent
+// 1. Initialize our specialized worker agent with explicitly bound tools
 const dataAgent = new BaseAgent({
   name: "DataScraper",
   systemInstruction: "You are an analytics agent. Execute queries carefully.",
-  tools: ["SQL_Execute", "WebSearch"],
+  tools: ["SQL_Execute", "WebSearch_MCP"],
 });
 
-// 2. Swarm Orchestration
-const orchestrator = new Orchestrator();
+// 2. Setup the Swarm Orchestration Engine
+const orchestrator = new Orchestrator({
+  telemetry: true,
+  stateCheckpointing: true,
+});
+
+// 3. Dispatch the task. The Orchestrator handles queueing, retries, and context management.
 await orchestrator.routeTask({
   agent: dataAgent,
   task: "Compile an aggregated report of recent Q3 user signups.",
-  paradigm: "SWARM",
+  paradigm: SwarmParadigm,
+  budgetTracker: { maxTokens: 150000, maxIterations: 10 },
 });
 ```
+
+### 📂 Explore Concrete Code Examples
+
+Developers love copy-paste. Jump straight into the action with our dedicated [`/examples`](./examples) directory:
+
+- 🐝 **[`/examples/01-basic-swarm.ts`](./examples/01-basic-swarm.ts)**: A simple script spawning multiple agents to execute a complex research pipeline.
+- 🛑 **[`/examples/02-human-approval.ts`](./examples/02-human-approval.ts)**: Triggering a secure, deterministic task freeze for deploying code to production (HITL).
+- 🔌 **[`/examples/03-mcp-github.ts`](./examples/03-mcp-github.ts)**: Creating a background daemon that reviews PRs using a standard GitHub MCP integration.
+- ⚖️ **[`/examples/04-consensus-debate.ts`](./examples/04-consensus-debate.ts)**: Forcing three biased agents into a blind tribunal debate to assess architectural risk.
+- 📊 **[`/examples/05-data-pipeline.ts`](./examples/05-data-pipeline.ts)**: Tearing through bulk data using the MapReduce agent cluster pattern.
 
 ### 🎯 Example Use Cases
 
@@ -90,17 +141,37 @@ What can you build with Orchestra?
 
 We love the current open-source agent ecosystems, but Orchestra is specifically built to address the gaps observed when attempting to take agents out of the terminal and into massive enterprise production.
 
-| Feature             | Orchestra 🎻                   | LangChain / LangGraph        | AutoGen / CrewAI       |
-| :------------------ | :----------------------------- | :--------------------------- | :--------------------- |
-| **Execution Model** | **Asynchronous Worker Pools**  | Synchronous Block / Graph    | Mostly Synchronous     |
-| **Error Recovery**  | **Native Checkpoint & Resume** | Custom implementation needed | Basic Retries          |
-| **Autonomy**        | **Background Daemons**         | Triggered only               | Primarily interactive  |
-| **Token Tracking**  | **Semantic Sliding Windows**   | Manual memory arrays         | Manual / Basic summary |
-| **Governance**      | **Hard Tool Execution RBAC**   | Custom implementation needed | Open execution         |
+| Feature                | Orchestra 🎻                                        | LangChain / LangGraph                      | AutoGen / CrewAI                             |
+| :--------------------- | :-------------------------------------------------- | :----------------------------------------- | :------------------------------------------- |
+| **Execution Model**    | **Distributed Asynchronous Worker Pools (Pub/Sub)** | Synchronous Single-Thread Graph Execution  | Mostly Synchronous / Role-Based Sequential   |
+| **Error Recovery**     | **Native Checkpoint & Resume (State Rehydration)**  | Developer must build custom persistence    | Basic Retries / No persistent session state  |
+| **Agent Coordination** | **Swarm, Consensus, & Hierarchical (Native)**       | Node-to-Node Graph Routing                 | Turn-based chat / Sequential routing         |
+| **Autonomy Level**     | **Background Daemons (Cron/Event loop polling)**    | Triggered explicitly via direct invocation | Primarily interactive terminal conversations |
+| **Token Tracking**     | **Semantic Sliding Windows & Vector RAG**           | Manual dict/list manipulation              | Manual tracking / Basic system summarization |
+| **Tool Validation**    | **Strict Zod Schemas + MCP Remote Protocol**        | Loose typing / Dynamic prompt injection    | Basic Python function parsing                |
+| **Governance & Sec**   | **Hard Tool RBAC, Budgets, Sandboxing**             | Custom architecture required               | Open internal execution                      |
+| **Observability**      | **Native OpenTelemetry & Event Store**              | Callback handler system                    | Print-statement / Basic debug logs           |
 
 ---
 
-## 📚 Comprehensive Documentation
+## 🌐 Supported LLM Providers
+
+Orchestra abstracts the LLM interface, allowing you to seamlessly swap out intelligence engines based on pricing, speed, and capability.
+
+- **Google Gemini** (`gemini-1.5-pro`, `gemini-1.5-flash`) - _Default_
+- **OpenAI** (`gpt-4o`, `gpt-4-turbo`)
+- **Anthropic** (`claude-3.5-sonnet`, `claude-3-opus`)
+- **Mistral** (`mistral-large`)
+- **Cohere** (`command-r-plus`)
+- **Groq & DeepSeek** (For ultra-low latency, open-source inference)
+
+Configure your preferred providers securely via the `.env` file.
+
+---
+
+## 📚 Comprehensive Documentation & API Reference
+
+**[📖 View the Full API Reference](https://your-github-username.github.io/orchestra/api/)** (Autogenerated via TypeDoc)
 
 We have meticulously documented every facet of Orchestra into dedicated architectural blueprints. Dive deeply into how the framework operates by exploring our comprehensive **`/readme`** directory:
 
@@ -111,6 +182,8 @@ We have meticulously documented every facet of Orchestra into dedicated architec
 - 🛠️ [Skill Management & Custom Tools](readme/custom-tools-and-skills.md) - Building validated Zod tools for your agents.
 - 🧠 [Memory Layer (Mesh)](readme/memory-layer.md) - Contextual short-term and semantic long-term memory routing.
 - 📉 [LLM Token Optimization](readme/token-optimization.md) - Strategies we use to minimize token explosion.
+- 🐜 [Advanced Swarm Algorithms](readme/advanced-swarms.md) - Deep dive into Consensus, Debate, and SWARM MapReduce paradigms.
+- 💡 [Prompt Engineering Best Practices](readme/prompt-engineering-best-practices.md) - Writing safe, strict boundary System Prompts for scalable agent clusters.
 
 ### Infrastructure & Operations
 
@@ -118,7 +191,10 @@ We have meticulously documented every facet of Orchestra into dedicated architec
 - 📡 [Internal Message Bus & Pub/Sub](readme/message-bus.md) - Inside the global distributed event queue.
 - 💾 [Resilience & Checkpointing Recovery](readme/resilience-recovery.md) - Defend against LLM flakiness.
 - 🛡️ [Security & Governance](readme/security-governance.md) - Implementing role-based access for AI functions.
-- 📊 [Enterprise Telemetry](readme/enterprise-telemetry.md) - Keeping an audit log of autonomous actions.
+- 📊 [Enterprise Telemetry & OpenTelemetry](readme/enterprise-telemetry.md) - Keeping an audit log of autonomous actions.
+- 🔍 [Event Sourcing & Distributed Tracing](readme/event-sourcing-and-tracing.md) - A native guide to time-travel debugging inside swarms.
+- 🔌 [MCP & Remote Integrations](readme/mcp-and-integrations.md) - Native Model Context Protocol server mounting patterns.
+- 🛑 [Human-in-the-loop (HITL)](readme/human-in-the-loop.md) - Suspending state deterministically for human deployment approvals.
 - 🚀 [Deployment & Scaling Guide](readme/deployment-and-scaling.md) - Taking Orchestra to production.
 
 ---
@@ -191,20 +267,23 @@ Understanding the repository layout is key to navigating the framework:
 
 ## 🗺️ Roadmap 2026/2027
 
-We are actively building the future of distributed multi-agent systems. Coming soon:
+We are actively building the future of distributed multi-agent systems. Prioritized roadmap items:
 
-- [ ] **Native Vector Database Wrappers:** Built-in semantic search for long-term Memory Layers using Pinecone and Weaviate natively.
-- [ ] **Multi-Modal Capabilities:** Out-of-the-box support for vision-based agents parsing UI screenshots for automated QA testing.
-- [ ] **Kubernetes Operator:** A native Helm chart and Operator to seamlessly deploy `WorkerNodes` dynamically matching Message Bus queue depths.
-- [ ] **WebSockets Message Bus:** Real-time event streaming directly to the React dashboard layer for live execution visualization.
+- [ ] **High-Performance Go/Rust Re-Write:** Re-architecting the core `WorkerPool` queue consumer in Rust/Golang to massively increase concurrent job throughput logic.
+- [ ] **First-Class MCP (Model Context Protocol) Support:** Natively connect agents to universal external tools via standard MCP servers without writing custom wrappers.
+- [ ] **Multi-Agent Reinforcement Learning (MARL):** Implementing algorithmic feedback loops where agents analyze telemetry logs to autonomously self-optimize prompt logic paths.
+- [ ] **Production Dashboards (Grafana/Prometheus):** A standalone web dashboard specifically engineered for visualizing internal OpenTelemetry metrics, worker node heartbeat statuses, and active queue counts.
+- [ ] **Multi-Language Interoperability:** A Python SDK for `WorkerNodes`, allowing you to write your ML or Data Science agents in Python and seamlessly connect them up to the primary TypeScript Orchestrator via the Message Bus.
+- [ ] **Kubernetes Operator Native Release:** A native Helm chart and Operator to seamlessly deploy `WorkerNodes` dynamically matching Message Bus queue depth using KEDA.
+- [ ] **Serverless Execution Engines:** Fully isolated AWS Lambda / Cloudflare Worker deployment pipelines for executing untrusted user-generated agent logic.
 
 ---
 
 ## 🤝 Contributing
 
-We want Orchestra to become the standard for open-source AI orchestration. Whether you are fixing typos, building new SDK tools, or proposing fundamental architecture shifts, we welcome your input!
+We want Orchestra to become the standard for open-source AI orchestration. We welcome your input, whether you are fixing typos, building new SDK tools, or proposing fundamental architecture shifts!
 
-Please refer to the open issues and feel free to submit pull requests.
+Please see our [Contributing Guide](CONTRIBUTING.md) for details on how to set up your development environment, run tests, and adhere to our coding standards. Also, please review our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## ⭐ Support the Project
 

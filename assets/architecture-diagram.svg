@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 650" style="background-color: #09090b; font-family: 'Inter', system-ui, sans-serif;">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#71717a" />
+    </marker>
+    <linearGradient id="boxGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#18181b"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#8b5cf6" />
+    </linearGradient>
+  </defs>
+
+  <g stroke="#ffffff" stroke-width="1" stroke-opacity="0.03">
+    <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
+      <rect width="30" height="30" fill="none" />
+      <path d="M 30 0 L 0 0 0 30" fill="none" />
+    </pattern>
+    <rect width="1000" height="650" fill="url(#grid)" />
+  </g>
+
+  <!-- Connections -->
+  <path d="M 240 140 L 400 140" stroke="#71717a" stroke-width="2" marker-end="url(#arrow)" fill="none" />
+  <path d="M 500 180 L 500 250" stroke="#71717a" stroke-width="2" marker-end="url(#arrow)" fill="none" />
+  <path d="M 600 140 L 760 140" stroke="#71717a" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)" fill="none" />
+  
+  <path d="M 400 280 L 300 280 L 300 390 L 400 390" stroke="#71717a" stroke-width="2" marker-end="url(#arrow)" fill="none" />
+  <path d="M 600 280 L 700 280 L 700 390 L 600 390" stroke="#71717a" stroke-width="2" marker-end="url(#arrow)" fill="none" />
+  <path d="M 500 310 L 500 480" stroke="#71717a" stroke-width="2" marker-end="url(#arrow)" fill="none" />
+
+  <!-- Client App -->
+  <rect x="40" y="100" width="200" height="80" rx="8" fill="url(#boxGrad)" stroke="#27272a" stroke-width="2" />
+  <text x="140" y="145" fill="#e4e4e7" font-size="18" font-weight="600" text-anchor="middle">🖥️ Frontend / Client</text>
+
+  <!-- Orchestrator -->
+  <rect x="400" y="100" width="200" height="80" rx="8" fill="#18181b" stroke="url(#accent)" stroke-width="3" />
+  <text x="500" y="135" fill="#ffffff" font-size="20" font-weight="700" text-anchor="middle">Orchestrator Node</text>
+  <text x="500" y="160" fill="#a1a1aa" font-size="14" font-weight="400" text-anchor="middle">Task Submission &amp; Router</text>
+
+  <!-- External Data / Events -->
+  <rect x="760" y="60" width="200" height="130" rx="8" fill="url(#boxGrad)" stroke="#27272a" stroke-width="2" />
+  <text x="860" y="95" fill="#e4e4e7" font-size="16" font-weight="600" text-anchor="middle">🗄️ EventStore &amp; OTel</text>
+  <line x1="780" y1="110" x2="940" y2="110" stroke="#27272a" stroke-width="1" />
+  <text x="860" y="135" fill="#e4e4e7" font-size="16" font-weight="600" text-anchor="middle">🧠 Memory Mesh</text>
+  <text x="860" y="160" fill="#a1a1aa" font-size="13" font-weight="400" text-anchor="middle">Pinecone / SQLite Checkpoints</text>
+
+  <!-- Message Bus -->
+  <rect x="400" y="250" width="200" height="60" rx="30" fill="#27272a" stroke="#3f3f46" stroke-width="2" />
+  <text x="500" y="286" fill="#e4e4e7" font-size="18" font-weight="600" text-anchor="middle">⚡ Distributed Message Bus</text>
+
+  <!-- Worker Swarm Area -->
+  <rect x="250" y="360" width="500" height="250" rx="12" fill="none" stroke="#27272a" stroke-width="2" stroke-dasharray="8 8" />
+  <text x="500" y="380" fill="#71717a" font-size="14" font-weight="600" text-anchor="middle">WORKER NODE CLUSTER (AUTO-SCALING)</text>
+
+  <!-- Worker 1 -->
+  <rect x="280" y="400" width="180" height="80" rx="8" fill="url(#boxGrad)" stroke="#3f3f46" stroke-width="2" />
+  <text x="370" y="435" fill="#e4e4e7" font-size="16" font-weight="600" text-anchor="middle">🤖 Worker Node 1</text>
+  <text x="370" y="460" fill="#a1a1aa" font-size="13" font-weight="400" text-anchor="middle">Persona: Data Gen</text>
+
+  <!-- Worker 2 -->
+  <rect x="540" y="400" width="180" height="80" rx="8" fill="url(#boxGrad)" stroke="#3f3f46" stroke-width="2" />
+  <text x="630" y="435" fill="#e4e4e7" font-size="16" font-weight="600" text-anchor="middle">🤖 Worker Node 2</text>
+  <text x="630" y="460" fill="#a1a1aa" font-size="13" font-weight="400" text-anchor="middle">Persona: QA / Auditor</text>
+
+  <!-- Worker 3 / Daemon -->
+  <rect x="410" y="500" width="180" height="80" rx="8" fill="url(#boxGrad)" stroke="#3f3f46" stroke-width="2" />
+  <text x="500" y="535" fill="#e4e4e7" font-size="16" font-weight="600" text-anchor="middle">👻 Daemon Node</text>
+  <text x="500" y="560" fill="#a1a1aa" font-size="13" font-weight="400" text-anchor="middle">Background Cron Execution</text>
+
+  <!-- Tools & MCP -->
+  <path d="M 750 440 L 790 440" stroke="#71717a" stroke-width="2" marker-end="url(#arrow)" fill="none" />
+  <rect x="790" y="360" width="170" height="250" rx="8" fill="url(#boxGrad)" stroke="#27272a" stroke-width="2" />
+  <text x="875" y="400" fill="#e4e4e7" font-size="16" font-weight="600" text-anchor="middle">🛠️ Tool Registry</text>
+  <text x="875" y="420" fill="#a1a1aa" font-size="13" font-weight="400" text-anchor="middle">Zod + RBAC Engine</text>
+  <line x1="810" y1="440" x2="940" y2="440" stroke="#27272a" stroke-width="1" />
+  <text x="875" y="475" fill="#e4e4e7" font-size="16" font-weight="600" text-anchor="middle">🔌 MCP Servers</text>
+  <text x="875" y="500" fill="#a1a1aa" font-size="13" font-weight="400" text-anchor="middle">Remote Integrations</text>
+  <text x="875" y="520" fill="#a1a1aa" font-size="13" font-weight="400" text-anchor="middle">(GitHub, Notion, DB)</text>
+  
+  <path d="M 590 540 L 710 540 L 710 465 L 750 465" stroke="#71717a" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow)" fill="none" />
+</svg>
