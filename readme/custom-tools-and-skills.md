@@ -13,22 +13,25 @@ Agents are sandboxed by default. They can only execute tools explicitly granted 
 3. **Register:** Add it to the global `ToolRegistry` or bind it directly to an agent persona.
 
 ```typescript
-import { z } from 'zod';
+import { z } from "zod";
 
 const myCustomTool = {
-    name: 'fetch_stock_price',
-    description: 'Retrieves the real-time stock price for a given ticker.',
-    schema: z.object({
-        ticker: z.string().describe('The stock ticker symbol, e.g., AAPL')
-    }),
-    execute: async (args: { ticker: string }) => {
-        const response = await fetch(`https://api.stocks.example/?symbol=${args.ticker}`);
-        return await response.json();
-    }
-}
+  name: "fetch_stock_price",
+  description: "Retrieves the real-time stock price for a given ticker.",
+  schema: z.object({
+    ticker: z.string().describe("The stock ticker symbol, e.g., AAPL"),
+  }),
+  execute: async (args: { ticker: string }) => {
+    const response = await fetch(
+      `https://api.stocks.example/?symbol=${args.ticker}`,
+    );
+    return await response.json();
+  },
+};
 ```
 
 ### Tool Modalities
+
 - **Native TypeScript Execution:** Directly execute code inside the Node environment.
 - **MCP Client (Model Context Protocol):** Interface with remote external tool APIs and simulation environments using standard MCP protocols.
 - **File System / OS Level:** For background `AutonomousDaemon` agents manipulating local repositories or building code.

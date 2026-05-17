@@ -11,6 +11,7 @@ Instead of directly invoking agent functions, the framework utilizes `QueueBroke
 - **Heartbeat Monitoring:** Worker agents emit regular `HEARTBEAT` pings over the bus. The `WorkerPool` daemon listens to these across the system, enabling self-healing. If a worker goes quiet, it's restarted.
 
 ## Why a Message Bus?
+
 1. **Decoupling:** Front-end interfaces never block waiting for an LLM response.
 2. **Scalability:** You can spin up infinite worker nodes listening to the same queue.
 3. **Resilience:** If a node crashes during execution, the unacknowledged message can be picked up by another node or processed on restart.
