@@ -495,8 +495,11 @@ export class ProviderRegistry {
                     modelId
                 };
             } catch (err: any) {
+                const isAuthError = err.message?.includes('API key') || err.name === 'LoadAPIKeyError';
+                if (!isAuthError) {
+                    console.error(`[ProviderRegistry] generateText failed: ${err.message}`, err);
+                }
                 logToFile(`generateText FAILED: ${err.message}`);
-                console.error(`[ProviderRegistry] generateText failed: ${err.message}`, err);
                 throw err;
             }
         }, config.fallbackConfig).catch(error => {

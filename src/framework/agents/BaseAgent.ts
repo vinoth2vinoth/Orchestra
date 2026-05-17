@@ -509,6 +509,21 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
     }
 
     /**
+     * Captures a point-in-time snapshot of the agent's full state for debugging.
+     */
+    public captureSnapshot() {
+        return {
+            card: { ...this.card },
+            memory: {
+                core: this.memory.getCoreMemory(this.card.id),
+                instructionPatches: [...this.instructionPatches]
+            },
+            llm: { ...this.llmConfig },
+            tools: Object.keys(this.localTools)
+        };
+    }
+
+    /**
      * Abstract method that concrete classes must implement to handle structural logic.
      */
     abstract execute(task: any, threadId: string): Promise<any>;

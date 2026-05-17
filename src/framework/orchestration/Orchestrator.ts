@@ -248,18 +248,29 @@ export class Orchestrator {
         if (events.length < 5) return; // Not enough context to reflect deeply
 
         try {
-            const systemPrompt = "You are the Orchestra Reflection Engine. Your goal is to analyze agent interactions and identify missed optimizations or repeated errors.";
+            const systemPrompt = `You are the Orchestra Strategic Reflection Engine. 
+Your goal is to perform deep behavioral analysis on agent interactions.
+Look for:
+- Logic loops or repeated misalignments.
+- Tool usage inefficiencies (e.g., redundant calls).
+- Missed opportunities for parallelization in the current paradigm.
+- Tone or style inconsistencies that suggest agent confusion.
+
+Distill your findings into high-level 'Wisdom Mutations' that can be applied to future cycles.`;
+
             const reflectionTask = `
-Analyze the execution logs for Thread [${threadId}]:
-${JSON.stringify(events.slice(-50), null, 2)}
+=== THREAD EXECUTION LOGS [${threadId}] ===
+${JSON.stringify(events.slice(-100), null, 2)}
+=== END LOGS ===
 
-Identify if:
-1. Any agent had to be corrected by another.
-2. Any agent repeatedly failed at a specific task.
-3. A specific tool call combination was highly successful.
+Analyze the execution above.
+If you can identify a concrete rule to improve future performance, output exactly:
+SYSTEM_OPTIMIZATION: [Clear, actionable rule]
 
-If you find a meta-rule, return it in this format: "SYSTEM_OPTIMIZATION: [Rule]". If not, return "NO_META_LEARNING".
-`;
+If you see a behavioral flaw that needs correcting, output exactly:
+BEHAVIORAL_MUTATION: [Specific correction for agent prompts]
+
+Otherwise, output "NO_LEARNING_DETECTED".`;
             
             // Use the top-priority agent (usually Manager) to reflect
             const reflector = agents[0];
@@ -340,12 +351,32 @@ If you find a meta-rule, return it in this format: "SYSTEM_OPTIMIZATION: [Rule]"
         // Using WBFT to achieve robust agreement over hallucination
         const validVoters = agents.filter(a => a.card.role === 'CRITIC' || a.card.role === 'WORKER');
         
-        // Pass blackboard to voter context if possible (WBFT would need update to support blackboard context)
-        const finalAnswer = await this.wbft.reachConsensus(task, validVoters, threadId);
+        if (validVoters.length === 0) throw new Error("Consensus paradigm requires at least one WORKER or CRITIC agent.");
+
+        let consensusResult: string | null = null;
+        try {
+            consensusResult = await this.wbft.reachConsensus(task, validVoters, threadId);
+        } catch (err: any) {
+            console.warn(`[Orchestrator] WBFT Consensus failed: ${err.message}`);
+        }
+        
+        // Enhance: If consensus fails (e.g. total disagreement), escalate to Manager/Judge
+        if (!consensusResult) {
+            const judge = agents.find(a => a.card.role === 'MANAGER' || a.card.role === 'JUDGE');
+            if (judge) {
+                const adjudicationPrompt = `The agent swarm failed to reach consensus on the following task: "${task}".\n\nIndividual agent outputs were inconsistent. Please review the findings and provide a definitive strategic resolution.`;
+                const finalAnswer = await this.executeAgentTask(judge, adjudicationPrompt, threadId, blackboard);
+                return { 
+                    consensusReached: false, 
+                    wasAdjudicated: true,
+                    finalAnswer 
+                };
+            }
+        }
         
         return { 
             consensusReached: true, 
-            finalAnswer 
+            finalAnswer: consensusResult 
         };
     }
 
@@ -878,8 +909,12 @@ IMPORTANT: If an agent failed (CRITICAL_FAILURE), do not ignore it. Acknowledge 
                     payload: { action: 'CONSOLIDATED_LEARNING', rule: response.text }
                 });
             }
-        } catch (err) {
-            console.warn("Learning consolidation failed", err);
+        } catch (err: any) {
+            // Silently skip learning if provider fails (e.g. missing keys during tests)
+            if (err.message?.includes('API key') || err.name === 'LoadAPIKeyError') {
+                return; 
+            }
+            console.warn("[ORCHESTRATOR] Learning consolidation skipped:", err.message);
         }
     }
 }

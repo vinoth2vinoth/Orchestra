@@ -33,16 +33,34 @@ export class Sanitizer {
     }
 
     /**
-     * Basic PII/Secret scrubbing - VERY SIMPLE MOCK for the demo
+     * Basic PII/Secret scrubbing - targeted patterns for API keys, JWTs, and sensitive IDs.
      */
     public static scrubSecrets(text: string): string {
-        // Redact potential API keys (simple heuristic)
-        return text.replace(/[a-zA-Z0-9]{32,}/g, (match) => {
-            // If it looks like a hex or base64 long string, redact it
-            if (/^[a-fA-F0-9]+$/.test(match) || /^[a-zA-Z0-9+/=]+$/.test(match)) {
-                return '[REDACTED_SECRET]';
+        if (!text) return '';
+        
+        let scrubbed = text;
+        
+        // Redact standard API keys (e.g. sk-..., AIza...)
+        scrubbed = scrubbed.replace(/(sk-[a-zA-Z0-9]{20,})|(AIza[a-zA-Z0-9_-]{35,})/g, '[REDACTED_API_KEY]');
+        
+        // Redact JWTs
+        scrubbed = scrubbed.replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, '[REDACTED_JWT]');
+
+        // Redact emails
+        scrubbed = scrubbed.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[REDACTED_EMAIL]');
+
+        // Universal entropy-based long string check (e.g. hex/base64 secrets)
+        scrubbed = scrubbed.replace(/[a-zA-Z0-9/+]{32,}/g, (match) => {
+            // Only redact if it looks like high-entropy data (random-ish)
+            // This is a naive check to avoid redacting long legitimate words
+            const hasNumbers = /[0-9]/.test(match);
+            const hasSpecial = /[+/]/.test(match);
+            if (match.length > 40 || (hasNumbers && match.length > 32) || hasSpecial) {
+                return '[REDACTED_SECRET_DATA]';
             }
             return match;
         });
+
+        return scrubbed;
     }
 }

@@ -8,6 +8,7 @@ import { globalStateAdapter } from './StateAdapter.ts';
  */
 export class EventStore {
     private events: FrameworkEvent[] = [];
+    private eventIds: Set<string> = new Set();
     private threadIndex: Map<string, FrameworkEvent[]> = new Map();
     private listeners: ((event: FrameworkEvent) => void)[] = [];
 
@@ -39,9 +40,10 @@ export class EventStore {
 
     private internalAppend(event: FrameworkEvent) {
         // Prevent duplicate local appending
-        if (this.events.some(e => e.id === event.id)) return;
+        if (this.eventIds.has(event.id)) return;
 
         this.events.push(event);
+        this.eventIds.add(event.id);
         
         // Update thread index
         if (!this.threadIndex.has(event.threadId)) {
@@ -77,6 +79,7 @@ export class EventStore {
 
     public clear() {
         this.events = [];
+        this.eventIds.clear();
         this.threadIndex.clear();
     }
 
@@ -95,7 +98,9 @@ export class EventStore {
 
     private rebuildIndexes() {
         this.threadIndex.clear();
+        this.eventIds.clear();
         for (const event of this.events) {
+            this.eventIds.add(event.id);
             if (!this.threadIndex.has(event.threadId)) {
                 this.threadIndex.set(event.threadId, []);
             }

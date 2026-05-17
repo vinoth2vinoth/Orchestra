@@ -1,6 +1,6 @@
 {
-  "name": "Orchestra - Multi-Agent Framework",
-  "description": "A framework for building and running autonomous multi-agent conversations and workflows.",
+  "name": "Orchestra AI Orchestration",
+  "description": "A sophisticated multi-paradigm AI orchestration framework supporting Swarms, Graphs, Consensus, and autonomous agent coordination.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
