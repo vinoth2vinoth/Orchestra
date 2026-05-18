@@ -9,18 +9,30 @@ import { Span, SpanStatusCode } from '@opentelemetry/api';
 export class TelemetrySystem {
     private static activeSpans: Map<string, { start: number; otelSpan?: Span }> = new Map();
     private static tracer = globalOTelExporter.getTracer();
+    private static MAX_ACTIVE_SPANS = 500; // Circuit breaker for memory protection
+    private static isDisabled = process.env.DISABLE_TELEMETRY === 'true';
 
     /**
      * Starts a uniquely identified span. Returns the start timestamp.
      */
     public static startSpan(spanId: string, parentSpan?: Span): number {
+        if (this.isDisabled) return Date.now();
         const start = Date.now();
         
+        // --- PERFORMANCE: Prevention of Memory Bloat ---
+        // If we exceed capacity, clear the oldest 10% to prevent unbounded growth from orphaned spans
+        if (this.activeSpans.size >= this.MAX_ACTIVE_SPANS) {
+            const keys = Array.from(this.activeSpans.keys());
+            for (let i = 0; i < Math.ceil(this.MAX_ACTIVE_SPANS * 0.1); i++) {
+                this.activeSpans.delete(keys[i]);
+            }
+        }
+
         let otelSpan: Span | undefined;
         try {
             otelSpan = this.tracer.startSpan(spanId, undefined, parentSpan ? (parentSpan as any).context() : undefined);
         } catch (err) {
-            // Silently fail if OTel is not ready
+            // Silently fail if OTel is not ready, maintaining architectural resilience
         }
 
         this.activeSpans.set(spanId, { start, otelSpan });
@@ -31,19 +43,24 @@ export class TelemetrySystem {
      * Ends a span and returns the duration in ms.
      */
     public static endSpan(spanId: string, error?: Error): number {
+        if (this.isDisabled) return 0;
         const record = this.activeSpans.get(spanId);
         if (record === undefined) return 0;
         
         const duration = Date.now() - record.start;
         
         if (record.otelSpan) {
-            if (error) {
-                record.otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
-                record.otelSpan.recordException(error);
-            } else {
-                record.otelSpan.setStatus({ code: SpanStatusCode.OK });
+            try {
+                if (error) {
+                    record.otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+                    record.otelSpan.recordException(error);
+                } else {
+                    record.otelSpan.setStatus({ code: SpanStatusCode.OK });
+                }
+                record.otelSpan.end();
+            } catch (err) {
+                // Ignore OTel-specific failures to prevent breaking the main execution flow
             }
-            record.otelSpan.end();
         }
 
         this.activeSpans.delete(spanId);
@@ -58,6 +75,7 @@ export class TelemetrySystem {
         threadId: string,
         payload: TelemetryPayload
     ) {
+        if (this.isDisabled) return;
         globalEventStore.append({
             type: 'TELEMETRY_EMIT',
             sourceAgentId,

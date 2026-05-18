@@ -1,59 +1,49 @@
-# Human-in-the-Loop (HITL) Execution
+# 👥 Human-in-the-Loop (HITL)
 
-As multi-agent swarms take on increasingly complex and high-stakes workflows—such as executing production database migrations, merging code, or deploying financial transactions—leaving them entirely autonomous presents critical risks. Even with robust System Prompts and rigorous consensus algorithms, edge cases arise where human judgment is non-negotiable.
+As multi-agent swarms take on increasingly complex and high-stakes workflows—such as merging code or deploying financial transactions—leaving them entirely autonomous presents critical risks. Orchestra explicitly addresses this by integrating a native **Human-in-the-Loop (HITL)** architecture.
 
-Orchestra explicitly addresses this by integrating a native **Human-in-the-Loop (HITL)** architecture. Rather than treating human intervention as a bolt-on workaround, HITL is fundamentally built into Orchestra's deployment state machine, allowing workflows to pause seamlessly, await human action, and resume deterministically.
+## 1. Triggers for Human Intervention
 
-## 1. The Core Principles of HITL in Orchestra
+In Orchestra, execution suspension occurs through three primary mechanisms:
 
-ImplementingHITL securely requires a system that treats pausing a live application just as safely as letting it run. When an agent requests human insight, Orchestra does not block the Node.js thread or hold TCP connections open. Instead, it relies on its immutable EventStore and Checkpoint architecture to effectively freeze the execution context.
+### A. The `request_human_help` Tool
+Agents are explicitly programmed to call this tool if they encounter ambiguity or need high-stakes authorization.
+- **Agent Instruction:** "If the user context is vague, invoke `request_human_help` with your justification."
+- **Payload:** Contains a `justification` for the pause and a `contextualSummary` of the current blocker.
 
-### Why Native HITL?
+### B. High-Risk Tool Guardrails
+When a tool is registered in the `ToolRegistry` with the `highRisk: true` flag, the `globalEscalationManager` automatically intercepts the call.
+- **Examples:** `deployBuild`, `deleteDatabase`, `transferFunds`.
+- **Action:** The system pauses *before* the tool logic is executed, presenting the tool's intended arguments to a human for verification.
 
-- **Financial Risk Mitigation:** Agents cannot spend massive cloud budgets or distribute funds without explicit cryptographic or tokenized sign-off.
-- **Safety and Compliance:** Production rollouts, especially in healthcare or infrastructure, fundamentally require a verified sysadmin's approval.
-- **Decision Disambiguation:** When a task is vaguely defined, a manager agent might spawn multiple proposed paths. Rather than guessing, it suspends execution and requests the user to pick the best path.
+### C. Systemic Escalation Policy
+The `EscalationManager` can automatically trip the circuit breaker and suspend a thread if:
+- **Failure Threshold:** An agent fails the same task node more than 3 consecutive times.
+- **Policy Violation:** The `PolicyEngine` flags a `MANDATORY` audit rule.
+- **Budget Capping:** The thread cost exceeds a predefined limit.
 
-## 2. Dynamic Pausing and Checkpoint Locking
+## 2. The Suspension & Rehydration Loop
 
-When a `WorkerNode` hits an execution blocker requiring human input, the system performs a localized checkpoint lock:
+Orchestra does not "block" threads during HITL. It uses an asynchronous **Freeze-Dry** pattern.
 
-1. **Tool-Level Triggers:** Specific Zod tools can be tagged with `requires_approval: true`. When an agent attempts to invoke `execute_production_deployment`, the `ToolRegistry` catches it.
-2. **State Suspension:** If intercepted, the Orchestrator instantly writes the entire active `MemoryMesh` thread out to the local `.orchestra/checkpoints/` disk database.
-3. **Queue Eviction:** The current Worker Node formally unsubscribes from that task trace securely, purging the local memory from its node heap and marking itself `IDLE` to pick up other background duties without wasting compute.
-4. **Notification Pub/Sub:** The Orchestrator fires an `AWAITING_HUMAN` event onto the global `MessageBus`. The UI dashboard or a Slack integration listens for this event and notifies the corresponding human.
+1. **State Capture:** The `Checkpointer` (Dimension 07) captures the entire active `MemoryMesh` and blackboard state.
+2. **Serialization:** The state is encrypted via AES-256-GCM and persisted to the `.orchestra/checkpoints/` directory.
+3. **Queue Eviction:** The current Worker Node is released to handle other tasks, ensuring zero compute waste during human wait times.
+4. **Notification:** A `HUMAN_INTERVENTION_REQUIRED` event is emitted via the `MessageBus` to the Dashboard.
 
-## 3. Human Approval workflows
+## 3. Adjudication & Resumption
 
-Orchestra supports varying tiers of HITL integration based on the urgency and complexity of the workflow.
+When a human interacts with a suspended task in the Dashboard:
 
-### A. The "Gatekeeper" Pattern
+- **Resolution Modalities:**
+    - **APPROVE:** Unlocks the trace and allows the tool/agent to proceed with the exact original parameters.
+    - **REJECT:** Forces a `PEER_REVIEW_REJECTION` error back into the agent's context, requiring it to find an alternative strategy.
+    - **MODIFY / INJECT:** The human provides new text input or overrides tool parameters.
 
-This is a standard binary Yes/No checkpoint.
+- **Feedback Injection:** Human feedback is injected as an immutable `PEER_REVIEW` event at the tail of the message history. Upon resumption, the agent is prompted to treat this input as a "Strategic Directive" from its supervisor.
 
-- The agent proposes: "I intend to run `DELETE FROM users WHERE last_login < 2020`."
-- The Orchestrator halts.
-- A human views the trace on the GUI React dashboard.
-- If the human clicks **Reject**, the Orchestrator forces a programmatic `ToolExecutionFailed` exception back into the agent's context, telling the LLM precisely why the human blocked it. The LLM must rethink its strategy and try another approach.
-- If the human clicks **Approve**, the task trace unlocks and rehydrates on a Worker Node to execute the drop command safely.
+## 4. Governance & Accountability
 
-### B. The "Guidance" Pattern
-
-Sometimes the agent isn't blocked by permission, but by ambiguity.
-
-- The agent hits a wall debugging a complex compiler error: "I have tried 4 different fixes for standard library mismatch, none worked."
-- The agent invokes `request_human_guidance(query)`.
-- The human reads the summary and provides a text response: "Downgrade the specific library version to 1.4.2, it's a known incompatibility."
-- The UI injects this human insight back into the blackboard context. The state rehydrates, and the agent continues.
-
-## 4. Telemetry and Audit Trails
-
-From a corporate governance perspective, simply allowing humans to override agents is not enough if it isn't tracked.
-
-- Every time a human interacts with a stalled task trace—whether approving, denying, or injecting context—the exact timestamp, user ID, and diff map is explicitly logged permanently within the Orchestrator's `EventStore`.
-- OpenTelemetry spans reflect this wait time. A trace might show "45ms Agent Planning", "12 hours Human Wait", "90ms Tool Execution." This allows enterprise platform teams to mathematically analyze where organizational approvals are creating massive sluggishness within autonomous processes.
-
-## 5. Security of the Loop
-
-A compromised dashboard or insecure API endpoint could theoretically impersonate a human approval, bypassing the firewall.
-To counter this, Orchestra allows for cryptographic signing of approvals. When the primary Orchestrator API receives a `RESUME` instruction, the HTTP payload must contain a valid, actively verified JWT or session cookie uniquely mapping back to an authorized persona possessing the strict `admin` or `system_supervisor` RBAC policy mapping. If a standard user attempts to approve a production drop, the system politely, but firmly, ignores the network request.
+All HITL interactions are cryptographically signed and logged in the **Immutable Audit Log**.
+- **Audit Fields:** `humanId`, `resolution`, `feedbackDelta`, `timestamp`.
+- **OTel Tracing:** Trace spans reflect "Human Wait Time" as a specialized dormant state, providing visibility into organizational bottlenecks.

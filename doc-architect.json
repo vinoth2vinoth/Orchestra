@@ -1,0 +1,18 @@
+{
+  "sourceRoot": "./src/framework",
+  "include": ["**/*.{ts,tsx,js,jsx}", "**/*.py", "**/*.go"],
+  "docsRoot": "./readme",
+  "mappings": {
+    "core": "core-orchestration.md",
+    "orchestration": "core-orchestration.md",
+    "memory": "memory-layer.md",
+    "agents": "agent-personas.md",
+    "plugins": "EXTENDING_WITH_PLUGINS.md",
+    "telemetry": "enterprise-telemetry.md",
+    "security": "SECURITY.md",
+    "resilience": "resilience-recovery.md",
+    "storage": "resilience-recovery.md",
+    "governance": "GOVERNANCE.md",
+    "testing": "TESTING_AND_STRESS.md"
+  }
+}

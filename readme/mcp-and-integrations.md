@@ -1,30 +1,54 @@
-# Model Context Protocol (MCP) & Remote Integrations
+# 🔌 Model Context Protocol (MCP) & Integrations
 
-As the AI engineering ecosystem expands rapidly, creating, actively maintaining, and aggressively testing custom agent tools for every possible SaaS API (e.g. Jira, GitHub, Slack, Notion) internally within your codebase becomes a massive engineering bottleneck.
+Orchestra leverages Anthropic's **Model Context Protocol (MCP)** to provide agents with a universal interface for interacting with external SaaS platforms, legacy databases, and specialized enterprise APIs.
 
-Orchestra bypasses this custom tool friction effectively by structurally adopting Anthropic's **Model Context Protocol (MCP)** specification.
+```mermaid
+sequenceDiagram
+    participant A as Logic Worker
+    participant R as ToolRegistry
+    participant C as MCPClient
+    participant S as Remote MCP Server
+    
+    A->>R: invoke("notion_search")
+    R->>C: resolveRemote("notion_server_01")
+    C->>S: SSE / HTTP POST (JSON-RPC)
+    S-->>C: Data Payload
+    C-->>R: Sanitized Result
+    R-->>A: Context Injection
+```
 
-## What is MCP?
+## 1. Why MCP?
 
-The Model Context Protocol establishes a native, standardized universal client-server architecture enabling LLMs securely to connect to disparate remote data sources, specialized enterprise internal apis, and massive external action environments perfectly over standard HTTP/SSE or JSON-RPC.
+Traditional tool integration requires hard-coding API logic inside the agentic framework. MCP decouples the "How" from the "What."
+- **Zero-Code Scaling:** Add support for Jira, Slack, or GitHub simply by adding an MCP server URL to the `.env` or config.
+- **Micro-Sandboxing:** MCP servers can run in isolated Docker containers, completely separate from the Orchestrator cluster.
 
-Rather than writing custom raw fetch requests mapping strict arguments specifically for the Notion API directly inside your internal TypeScript Worker logic:
+## 2. Dynamic Tool Discovery
 
-1. You deploy or import a community-standard Notion MCP Server execution container globally.
-2. The Orchestra `ToolRegistry` explicitly mounts the connection cleanly.
-3. The agents can dynamically natively "discover" all the specialized methods strictly supported by that remote MCP server natively alongside their specific expected Zod validation models perfectly.
+When an agent with MCP capabilities is initialized, the `MCPClient` performs a "Capabilities Handshake."
+- **Metadata Hydration:** The server returns a list of supported tools and their **Zod-compatible** schemas.
+- **On-the-fly Injection:** These tools are instantly injected into the agent's `SystemInstruction`, allowing it to reason about tools it didn't know existed at the time the framework was built.
 
-## Architecture Flow in Orchestra
+## 3. Security & Governance
 
-When a Worker Agent is booted into memory dynamically containing MCP capabilities:
+The `ToolGuard` and `IAMInterceptor` apply to MCP calls just like native tools:
+- **Redaction:** Any PII returned by the MCP server is scrubbed before reaching the LLM.
+- **Cost Tracking:** The `TelemetrySystem` records the latency and payload size of every remote integration call.
+- **Gatekeeping:** High-risk MCP actions (e.g., `delete_account`) still require human approval via the HITL loop.
 
-1. **Dynamic Schema Hydration:** The Orchestrator queries the registered remote MCP integration endpoints specifically assigned to the agent persona. It natively injects the discovered remote schemas squarely into the active model's `SystemInstruction` logic matrix structurally.
-2. **LLM Prediction Matrix:** The LLM actively outputs an invocation JSON plan explicitly targeting a specific tool endpoint (e.g., `notion_get_page_content`).
-3. **The Adapter:** The `ToolRegistry` fundamentally realizes this natively belongs to an external integration. Rather than executing a native Node script internally in the Sandbox, it correctly formats a secure RPC bridge payload properly and pipes it via the `MCPClient.ts` out explicitly to the external hosting container matrix.
-4. **Secure Execution Return:** The remote server actively completes the business logic handling safely and streams the specific output cleanly back into the agent's Short-Term Memory mesh structurally.
+## 4. Configuring a Connection
 
-## Advantages
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/repo"]
+    },
+    "memory": {
+      "url": "https://mcp.orchestra.ai/external-memory"
+    }
+  }
+}
+```
 
-- **Zero-Code Integrations:** Expand agent intelligence across systems purely via configuration URLs dynamically without structurally altering internal Node architecture or logic chains explicitly.
-- **Microservice Sandboxing:** Dangerous operations (like SQL executions on production shards) natively execute inside specialized, hard-jailed remote Kubernetes MCP container instances totally isolated from the primary LLM Orchestrator mesh.
-- **Extensibility:** Standard community-developed tools can be instantly explicitly adopted dynamically, making the Orchestra architecture essentially infinitely functionally scalable over specific custom enterprise topologies.

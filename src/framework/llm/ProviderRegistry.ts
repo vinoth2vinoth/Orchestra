@@ -645,8 +645,14 @@ export class ProviderRegistry {
             }
         } else if (lastMessage.includes('Extract actionable procedural rules')) {
             text = `When attempting to execute a workflow, if the provider is under high load (SimMode), you should leverage the Recursive Logic Engine to maintain fidelity.`;
+        } else if (lastMessage.includes('Reply with \'OK\' if sufficient')) {
+            text = "OK. The response is professionally complete and accurate for the given task.";
+        } else if (lastMessage.includes('Reply strictly with JSON')) {
+            text = `{"needsSpecialist": false, "expertise": "None"}`;
+        } else if (lastMessage.includes('GOAL_MET')) {
+            text = `<thought>Simulation goal check.</thought><plan>1. Success</plan><critic>None</critic><action>Finalizing</action><verification>GOAL_MET</verification>`;
         } else {
-            text = `[SIMULATED_LOGIC]: I have analyzed the request "${lastMessage.substring(0, 50)}..." and formulated a strategic response. This simulation uses the agent's internal reasoning template to maintain workflow integrity.`;
+            text = `[SIMULATED_LOGIC]: I have analyzed the request "${lastMessage.substring(0, 50)}..." and formulated a strategic response. This simulation uses the agent's internal reasoning template to maintain workflow integrity. GOAL_MET`;
         }
 
         return {
@@ -673,19 +679,16 @@ export class ProviderRegistry {
     }
 
     private static generateSimulatedStream(messages: any[]) {
-        const mockText = `[HI-FIDELITY SIMULATION]: Orchestrating multi-agent consensus for the requested task. In this paradigm, agents leverage the shared Memory Mesh to maintain state synchronization without redundant compute overhead.`;
+        const result = this.generateSimulatedText(messages);
+        const mockText = result.text;
         return {
             textStream: (async function* () { 
-                const words = mockText.split(' ');
-                for (const word of words) {
-                    yield word + ' ';
-                    await new Promise(r => setTimeout(r, 10));
-                }
+                yield mockText;
             })(),
             text: Promise.resolve(mockText),
             toolCalls: Promise.resolve([]),
             toolResults: Promise.resolve([]),
-            usage: Promise.resolve({ promptTokens: 150, completionTokens: 75, totalTokens: 225 }),
+            usage: Promise.resolve(result.usage),
             finishReason: Promise.resolve('stop')
         };
     }

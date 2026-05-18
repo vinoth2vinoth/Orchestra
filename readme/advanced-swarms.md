@@ -1,26 +1,37 @@
-# Advanced Swarm & Consensus Algorithms
+# 🐝 Advanced Swarm & Consensus Paradigms
 
-Orchestra's execution patterns effectively extend far beyond sequential loops. To solve massive computational generation queries, it explicitly natively applies complex algorithmic structures explicitly designed to mimic complex distributed intelligence correctly.
+Orchestra's execution patterns extend far beyond sequential loops. To solve complex generation and reasoning problems, it applies distributed intelligence algorithms inspired by Byzantine Fault Tolerance and MapReduce.
 
-## The SWARM Paradigm
+## 1. The SWARM (MapReduce) Pattern
 
-The SWARM paradigm fundamentally relies purely on horizontal MapReduce concepts applied dynamically to agent generation pipelines.
+The SWARM paradigm applies horizontal scaling to agent inference. Use this when a task is large, repetitive, and decomposable.
 
-### How It Operates:
+### The Lifecycle:
+1. **The 'Mapper' Stage:** A `Manager` agent splits a large objective (e.g., "Analyze these 50 files") into granular sub-tasks.
+2. **Distributed Fan-out:** The `Orchestrator` publishes these tasks to the `MessageBus`.
+3. **Mass Parallel Execution:** Idle `WorkerNodes` consume the tasks simultaneously across the cluster.
+4. **The 'Reducer' Stage:** As results flow back, a `Synthesizer` agent merges the outputs into a single, cohesive final response.
 
-1. **The 'Mapper' Stage:** An initial Manager Agent receives a massive document or a 200-task data queue structurally. It executes an initial `split_task` logic chain effectively breaking the overarching problem dynamically into highly granular explicit sub-components mapping independently.
-2. **Distributed Queue Expansion:** The Orchestrator intercepts these 200 distinct targets and publishes all of them dynamically simultaneously directly into the `MessageBus` target queues dynamically.
-3. **Mass Parallel Execution:** Highly tuned, fast transient Worker Nodes systematically devour the tasks asynchronously concurrently natively.
-4. **The 'Reducer' Stage:** As all worker execution results fundamentally flow cleanly back into the central Orchestrator event pipeline asynchronously over exactly several minutes, they are fundamentally aggregated. A distinct Synthesizer Agent specifically reads the mass collective outputs properly and logically merges the matrix into a pure finalized output schema matrix logically.
+```mermaid
+graph LR
+    A[Initial Task] --> B[Manager split]
+    B --> C1[Worker 1]
+    B --> C2[Worker 2]
+    B --> C3[Worker N]
+    C1 & C2 & C3 --> D[Synthesizer merge]
+    D --> E[Final Output]
+```
 
-## The CONSENSUS (Debate) Paradigm
+## 2. The CONSENSUS (Debate) Paradigm
 
-For significantly high-stakes risk evaluation paths (e.g. "Should we trigger a complete deployment rollout?"), utilizing a single hallucination-vulnerable agent logic matrix structure is fundamentally unsafe. The CONSENSUS execution parameter effectively ensures accuracy.
+For high-stakes decisions (e.g., "Deploy to Production"), a single LLM response is a single point of failure. The CONSENSUS paradigm ensures accuracy through adversarial alignment.
 
-### The Tribunal Execution Mode
+### The Tribunal Process:
+1. **Blind Assessment:** The Orchestrator launches 3 distinct agent personas (e.g., `AggressiveDeveloper`, `ConservativeQA`, `NeutralLead`) in parallel. They generate independent reviews in a "logical vacuum" to avoid bias.
+2. **The Reveal:** All conclusions are written to the shared **Blackboard**.
+3. **Iterative Debate:** Agents are re-prompted to critique their peers' reasoning. "Review User B's argument. Why is it flawed? Revise your stance if necessary."
+4. **Convergence:** The loop continues until **Signal Stabilization** (100% agreement) is reached, or a `maxIterations` limit triggers a majority-weighted vote.
 
-1. **Parallel Initial Prompts:** The Orchestrator formally launches exactly 3 completely distinct agent personas actively possessing entirely wildly different internal System Prompts structurally (e.g., `Risk_Aggressive_Developer`, `Ultra_Conservative_QA`, `Logical_Neutral_Reviewer`).
-2. **Blind Assessment:** They all individually read the specific target structural data silently purely in a vacuum, generating entirely blind independent assessments properly to ensure cognitive bias avoidance uniquely.
-3. **The Reveal & Review Matrix:** The Orchestrator takes the three disparate conclusions effectively and writes them securely natively into the collaborative `Blackboard`.
-4. **Iterative Debate Loops:** Natively, all 3 agents are explicitly re-prompted synchronously clearly with the overarching instruction: "Review your peers' distinct arguments systematically. Find flaws actively. Revise your specific original stance optimally if fundamentally required logically."
-5. **Convergence Scoring:** The pipeline structurally loops securely mapping these debate paths natively up to `maxIterations=5` explicitly until either absolute 100% agreement convergence optimally occurs, or a strict timeout matrix effectively forces them naturally to a mathematical blind vote aggregation matrix resolving the specific output accurately.
+## 3. Signal-to-Noise Filtering
+To prevent "Hallucination Cascades" in large swarms, Orchestra implements **Entropy Filtering**. If the variance between agent outputs is too high (indicating extreme ambiguity), the system automatically trips the `CircuitBreaker` and escalates to a `HumanHelpEvent`.
+

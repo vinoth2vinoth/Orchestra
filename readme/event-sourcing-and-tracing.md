@@ -1,31 +1,34 @@
-# Event Sourcing & Distributed Tracing
+# 🪵 Event Sourcing & Distributed Tracing
 
-Orchestra's execution models are fully asynchronous and incredibly complex. A single user prompt ("fix the login bug") might trigger 4 agents executing 50 tool calls over 5 minutes across 3 distributed Worker Nodes.
+Orchestra's execution models are fully asynchronous. A single user prompt might trigger dozens of agents and hundreds of events. To manage this complexity, we use an immutable `EventStore` combined with OpenTelemetry.
 
-If you solely rely on raw `console.log` statements in a production swarm setup, debugging AI failures or hallucination loops becomes mathematically impossible. To solve this, Orchestra implements strict **Event Sourcing** combined with **OpenTelemetry (OTel)** tracing.
+## 1. The Immutable Event Store
 
-## Immutable Event Sourcing
+The `EventStore` (Dimension 04) is the authoritative ledger of every action within the framework. It handles the lifecycle of events from emission to distributed persistence.
 
-Instead of merely mutating a database row locally, every significant state transition inside Orchestra emits a hardened, immutable Zod-validated Event payload to the `EventStore`.
+### Security-First Logging (Dimension 10)
+Before an event is appended to the store, it passes through an automated **Scrubbing Pipeline**.
+- **Secret Redaction:** The `Sanitizer.scrubSecrets` utility identifies high-entropy strings (API keys, JWTs) and replaces them with `[REDACTED]`.
+- **Recursive Sanitization:** Nested payloads (LLM reasoning, tool outputs) are recursively scanned to ensure no PII leaks into the primary audit logs.
 
-### Common Emitted Events:
+### Distributed synchronization
+The `EventStore` is not local to a single node. It uses the `StateAdapter` and `MessageBus` to synchronize history.
+- **`StateAdapter` Persistence:** Events are pushed to a central shared list, ensuring new nodes can "Rehydrate" their local event cache on startup.
+- **`FRAMEWORK_EVENTS` Pub/Sub:** Real-time events are broadcast over the message bus, allowing the Dashboard and other workers to react instantly.
 
-- `TASK_DISPATCHED`: The Orchestrator assigns a thread to a Swarm queue.
-- `AGENT_THOUGHT_PROCESSED`: The raw LLM reasoning chain (string) is parsed and saved natively.
-- `TOOL_EXECUTION_REQUESTED`: An agent natively outputs a strict JSON tool request boundary.
-- `TOOL_EXECUTION_FAILED`: Jailed error stack tracing containing the rejection reason (e.g. "Network Timeout" or "RBAC Denied").
-- `AGENT_CONSENSUS_REACHED`: In a specific debate paradigm, agents formally lock in their final synthesized JSON payload.
+## 2. High-Performance Event Indexing
 
-Because these logs are immutable, developers can build a "Time-Travel Debugger." You can theoretically scrub backwards through an entire multi-agent swarm execution loop to specifically witness _exactly_ which system prompt injection or context failure originally led to a downstream hallucination.
+To maintain low latency as event volume grows, the `EventStore` implements sophisticated indexing and memory management:
+- **Thread-Based Indexing:** Events are indexed by `threadId` for $O(1)$ retrieval of conversation history.
+- **Memory Tail Limits (Dimension 04):** To prevent memory exhaustion, the store only keeps the latest **1,000 global events** and **100 events per thread** in RAM. Older events are accessible via the persistent `StateAdapter` backend.
+- **Snapshots:** Developers can request a `getSnapshotAtTimestamp` to see the exact state of a thread at any historical point.
 
-## OpenTelemetry (OTel) Integration
+## 3. OpenTelemetry (OTel) Propagation
 
-To provide deep, enterprise-grade application performance monitoring (APM), Orchestra natively wraps the `EventStore` inside an OpenTelemetry Tracer instance out of the box.
+Orchestra natively wraps the orchestration logic in OTel context. Every task initiation generates a `TraceId` that is propagated across all distributed boundaries.
 
-### Tracking "The Trace"
+### Correlation Headers
+When the `Orchestrator` publishes a task to the `QueueBroker`, the current OTel context is attached to the message metadata. When a `WorkerNode` consumes the task, it extracts this context, ensuring that the worker's child spans are correctly nested under the original parent trace.
 
-Every core Objective submitted by a user generates a root `TraceId`. As the Orchestrator natively delegates sub-tasks across the entire pub/sub Worker Pool (via the Distributed Message Bus), this unique `TraceId` is propagated safely within the metadata headers.
-
-- This ensures that if Worker Node 3 crashes executing a specific Python script validation hook, the APM platform correctly ties that crash trace directly to the overarching parent Orchestrator root request.
-- Using the `.env` variable `OTLP_ENDPOINT`, you can instantly stream these complex multi-node traces out to modern aggregators like Jaeger, Datadog, or Grafana Tempo without writing any custom tracking glue logic natively.
-- **Budget Tracking Matrix:** The tracing spans automatically tag specific attributes natively, notably `llm.token.prompt_count` and `llm.token.completion_count`. This enables massive organizational cost-analytics natively. Engineering teams can visualize precisely which highly-specific Worker Personas mathematically consume the most AI generation billing budgets.
+- **Cost Tagging:** Spans include `llm.usage.cost` and `llm.usage.tokens` attributes, enabling granular financial analysis in tools like Jaeger or Honeycomb.
+- **Error Attribution:** Fatal exceptions in worker nodes are caught and attached to the trace with the `error` flag, providing a clear visualization of where a distributed failure originated.

@@ -1,6 +1,6 @@
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { ConsoleSpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { ConsoleSpanExporter, BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
 import { trace, Span } from '@opentelemetry/api';
@@ -17,12 +17,22 @@ export class OTelExporter {
 
     constructor() {
         const endpoint = process.env.OTLP_ENDPOINT;
-        const exporters: any[] = [new ConsoleSpanExporter()];
+        const isDisabled = process.env.DISABLE_TELEMETRY === 'true' || process.env.OTLP_ENDPOINT === 'none';
+        const exporters: any[] = [];
 
-        if (endpoint && endpoint !== 'local' && endpoint !== '') {
-            console.log(`[OTelExporter] External OTLP export enabled: ${endpoint}`);
+        if (isDisabled) {
+            this.sdk = new NodeSDK({ resource: resourceFromAttributes({}) });
+            return;
+        }
+
+        // Always use Console in dev for visibility, or only if no endpoint provided
+        if (!endpoint || endpoint === 'local') {
+            exporters.push(new ConsoleSpanExporter());
+        }
+
+        if (endpoint && endpoint !== 'local' && endpoint !== '' && endpoint !== 'none') {
             exporters.push(new OTLPTraceExporter({ url: endpoint }));
-        } else {
+        } else if (!isDisabled) {
             console.log(`[OTelExporter] Local-only mode active. Traces preserved in memory and console.`);
         }
 
@@ -31,9 +41,14 @@ export class OTelExporter {
             [SemanticResourceAttributes.SERVICE_VERSION]: '1.0.0',
         });
 
+        // --- PERFORMANCE: Batching (Dimension 04) ---
+        // BatchSpanProcessor is non-blocking and groups spans for efficient network usage
         this.sdk = new NodeSDK({
             resource,
-            spanProcessors: exporters.map(exp => new SimpleSpanProcessor(exp))
+            spanProcessors: exporters.map(exp => new BatchSpanProcessor(exp, {
+                maxQueueSize: 2048,
+                scheduledDelayMillis: 5000, // Export every 5 seconds to minimize network jitter
+            }))
         });
         
         try {

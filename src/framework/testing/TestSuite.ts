@@ -1,7 +1,7 @@
 import { Orchestrator, WorkflowConfig } from '../orchestration/Orchestrator.ts';
 import { BaseAgent } from '../agents/BaseAgent.ts';
 import { MemoryMesh } from '../memory/MemoryMesh.ts';
-import { globalEventStore } from '../core/EventStore.ts';
+import { SimulationManager } from '../core/SimulationManager.ts';
 
 export interface TestCase {
     name: string;
@@ -18,6 +18,7 @@ export class FrameworkTestSuite {
         console.log(`[TestSuite] Running test: ${test.name}`);
         const threadId = `TEST_${Date.now()}`;
         
+        SimulationManager.enable();
         try {
             const result = await this.orchestrator.executeWorkflow(test.task, test.config, threadId);
             
@@ -50,7 +51,7 @@ export class FrameworkTestSuite {
             async execute() {
                 return response;
             }
-        })(name, 'Mock Agent', role, new MemoryMesh(), { provider: 'OPENAI', modelName: 'gpt-4o' });
+        })(name, 'Mock Agent', role, new MemoryMesh(), { modelName: 'gpt-4o' });
         mockAgent.card.id = id;
         return mockAgent;
     }

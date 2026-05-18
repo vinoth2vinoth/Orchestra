@@ -28,6 +28,7 @@ export interface WorkflowState {
     agentDefinitions?: any[];
     resumeAgentId?: string;
     step?: number;
+    blackboard?: Record<string, any>;
 }
 
 export class StateStore {

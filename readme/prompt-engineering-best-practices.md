@@ -1,60 +1,46 @@
-# Prompt Engineering & System Alignment in Swarms
+# 🖋️ Prompt Engineering & System Alignment
 
-When operating a standard one-on-one chat application, prompting can be casual and relatively loose. The LLM can ask for clarification if confused. However, in an Orchestra **Multi-Agent Swarm** spanning 50 autonomous agents doing thousands of background tasks per hour, a vaguely worded prompt will result in cascading, catastrophic system failures.
+In a multi-agent swarm, a vague prompt is a systemic liability. Orchestra treats System Instructions not as "casual chat" but as **Compiled Software Boundaries**.
 
-In Orchestra, System Prompts are not merely "instructions"—they are rigorously strict compiled software boundaries. When an autonomous Worker Node wakes up from the Message Bus, it fundamentally relies entirely on its injected prompt architecture to understand its persona, the schemas it is allowed to use, and when precisely to terminate.
-
-## 1. Contextual Isolation and "Least Privilege" Prompts
-
-A massive anti-pattern in many open-source agent frameworks is "Prompt Bloat." Developers often stuff a single overarching System Prompt with 40 paragraphs detailing every single aspect of the company, the software deployment system, and the database schema.
-
-This leads to severe **Context Dilution**. The LLM inevitably forgets the explicit goal instruction buried at the bottom.
+## 1. The Principle of Least Privilege
+A major anti-pattern in agentic frameworks is "Prompt Bloat"—stuffing a single agent with 50 paragraphs of global context. This leads to **Context Dilution**, where the model misses critical constraints.
 
 ### Best Practices:
+- **Narrow Personas:** A `DatabaseGuard` agent should not know how the React frontend is styled.
+- **Zod-Driven Tooling:** Do not explain tools in plain text. Rely on **Zod schemas** in the `ToolRegistry`. Orchestra automatically translates these into hyper-precise JSON schemas that models understand better than prose.
 
-- **Keep Personas Narrow:** A `DatabaseOptimizer` agent should not know how the frontend React state works. Its System instruction should purely outline: "You are a Postgres performance expert. You analyze EXPLAIN statements and recommend query re-writes. Do not comment on visual styling."
-- **Embrace Ephemeral Tasks:** By relying on `ManagerAgents` to break down massive tasks, each underlying `WorkerNode` only receives the explicit piece it fundamentally requires.
-- **Tool Mapping:** Rather than explaining how tools work in plain text, rely exclusively on Zod schema descriptions. The `ToolRegistry` natively translates Zod models into perfect JSON schema structures for function calling representations. This drastically cuts down on internal System Prompt text bloat.
+## 2. Structural Encapsulation (Sterile Tags)
+Orchestra mandates the use of **XML-style tags** to demarcate instructions from data. This is proven to reduce instruction-override hallucinations.
 
-## 2. Formatting Structural Prompts
+```xml
+<IDENTITY>
+You are an expert Security Auditor.
+</IDENTITY>
 
-Orchestra deeply encourages building prompts using rigid Markdown architectures or XML encapsulation tags natively. Models like Claude 3 or Gemini 1.5 heavily respect structural tagging when traversing massive token windows.
+<CONSTRAINTS>
+1. Never suggest 'chmod 777'.
+2. If you see a hardcoded secret, invoke 'redact_secret'.
+</CONSTRAINTS>
 
-```markdown
-<identity>
-You are an overarching System Architect Manager.
-Your role is to evaluate codebase logic. 
-</identity>
-
-<rules>
-1. Do not execute code modifications yourself. 
-2. Delegate specific file writes to your worker agents natively.
-3. If tests fail twice, halt execution and request user feedback.
-</rules>
+<CONTEXT_ZONE>
+{{rag_injected_code}}
+</CONTEXT_ZONE>
 ```
 
-By structurally walling off constraints inside tags, developers significantly decrease the mathematical probability of "Instruction Override" hallucination events where the model actively ignores constraints.
+## 3. Defensive Logic & Circuit Breakers
+Agents must be prompted to handle failures deterministically.
 
-## 3. Designing Defense-in-Depth for Hallucination
+- **Explicit Exit Criteria:** "If the API returns a 429 twice, invoke `request_human_help` immediately. Do not retry a third time."
+- **Chain-of-Thought (CoT) Enforcement:** Mandate that agents output their reasoning to the `EventStore` *before* calling a destructive tool. This allows the `GovernanceEngine` to intercept flawed logic early.
 
-Even the best LLMs will eventually hallucinate under deep task loops, typically "Action Repeating" (e.g., executing a failing grep search, getting no results, then executing the exact same grep search again infinitely). System prompts must natively establish circuit-breaking logics.
+## 4. Dynamic Prompt Hydration (RAG)
+Orchestra's `MemoryMesh` allows for "Just-in-Time Prompting." We don't hardcode API specs; we inject them based on retrieved relevance.
 
-1. **Explicit Termination Rules:** Always explicitly instruct agents when to successfully exit. For example: "If the specific Jira ticket endpoint returns a 404 three times in a row, you must invoke the `abort_task` tool immediately and state that the ID is invalid. Do not attempt to guess a new ID."
-2. **Mandating "Show Your Work" (Chain of Thought):** Before an agent executes a massively complex database migration tool, prompt it explicitly to output its reasoning to the EventStore. "Before invoking `execute_sql`, you MUST write out the SQL query explicitly in a thought block and verify it contains a WHERE clause." This ensures the internal LLM reasoning path validates its own assumptions.
+- **The Injection Pattern:** `"You are currently using the GitHub API. Here is the documentation for the specific endpoint you requested: {mcp_hydration_payload}"`
 
-## 4. RAG-Injected Context Prompting
+## 5. Persona Iteration Loop
+Use the **Telemetry Studio** to identify "Stuck Points":
+1. **Analyze:** Find threads where the agent hit the `MaxIterations` limit.
+2. **Refine:** Identify which constraint was too vague (e.g., "be efficient" vs "complete the task in under 3 tool calls").
+3. **Benchmarking:** Deploy two worker nodes with different prompts and use the `ConsensusStrategy` to let them "debate" which approach is most robust.
 
-System prompts shouldn’t be completely static strings. Orchestra's `MemoryMesh` allows for dynamic prompt hydration.
-
-Instead of hardcoding APIs into the prompt, utilize dynamic RAG templates:
-`"You are connected to an internal API. Here is the swagger specification matching the user's intent: {swagger_spec_injection}."`
-
-By doing this, the Orchestrator can dynamically swap out the `{swagger_spec_injection}` context at runtime depending on the specific user task seamlessly.
-
-## 5. Iterative Refinement and Benchmarking
-
-Building resilient prompts is an engineering cycle.
-
-1. **Log Analysis:** Analyze the `EventStore` telemetry explicitly to see where agents "get stuck" in your standard workflows.
-2. **A/B Testing Personas:** In Orchestra, you can programmatically redefine multiple `WorkerNodes` with slight prompt variations (e.g., Node A gets a polite prompt, Node B gets an aggressive, demanding prompt). Route test tasks concurrently and statistically analyze which Prompt Persona finishes with a higher success tolerance.
-3. **Automated Consistency:** Use simpler 'Evaluator' agents strictly designed to read a worker's output and score its adherence to the System Prompt guidelines natively.

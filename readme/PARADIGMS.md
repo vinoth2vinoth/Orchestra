@@ -1,61 +1,49 @@
-# Orchestra Multi-Paradigm Architecture
+# 🎨 Multi-Paradigm Coordination Strategies
 
-Orchestra supports multiple coordination paradigms to solve different types of problems efficiently. Each paradigm is implemented as a `ParadigmStrategy`.
+Orchestra supports a wide array of coordination paradigms (implemented in `src/framework/orchestration/paradigms/`). Each paradigm is a specialized `ParadigmStrategy` that dictates how agents interact and reached conclusions.
 
-## Available Paradigms
+## Strategy Implementations
 
-### 1. HIERARCHICAL
-- **Role Requirement**: Exactly one `MANAGER` agent.
-- **Behavior**: The Manager receives the task and is responsible for all sub-delegation. It acts as the "CEO" of the swarm.
-- **Best for**: Tasks that require a top-down strategy and clear accountability.
+### 1. HIERARCHICAL (`HierarchicalStrategy.ts`)
+- **Logic**: Implements a strict "Manager-to-Worker" delegation loop.
+- **State**: The `blackboard` is used by the Manager to track sub-task completion states.
+- **Best For**: Multi-step engineering or legal workflows where one agent must enforce quality at each gate.
 
-### 2. CONSENSUS
-- **Role Requirement**: `WORKER` or `CRITIC` agents.
-- **Behavior**: Agents use the **Weighted Byzantine Fault Tolerance (WBFT)** protocol to reach agreement. If consensus fails, a `JUDGE` or `MANAGER` adjudicates.
-- **Best for**: High-stakes decisions, fact-checking, or avoiding LLM hallucinations.
+### 2. CONSENSUS (`ConsensusStrategy.ts`)
+- **Logic**: Workers execute in parallel. The strategy uses a **Weighted Voting Mechanism** to reconcile diverse outputs.
+- **Adjudication**: If weights are equal or below the threshold, it escalates to a `JUDGE` agent for final arbitration.
+- **Best For**: Sensitive financial or compliance checks.
 
-### 3. SWARM
-- **Role Requirement**: Multiple `WORKER` agents.
-- **Behavior**: Parallel execution. All workers tackle the problem simultaneously. A `MANAGER` synthesizes the fan-out results at the end.
-- **Best for**: Creative brainstorming, wide data gathering, or redundant validation.
+### 3. SWARM (`SwarmStrategy.ts`)
+- **Logic**: A "Leaderless" parallel fan-out. All workers receive segments of the task simultaneously via the `MessageBus`.
+- **Merging**: A final synthesis pass combines the parallel buffers into a coherent artifact via a `SynthesizerCard`.
 
-### 4. MAP_REDUCE
-- **Role Requirement**: `PLANNER`, `WORKER`s, and `MANAGER`.
-- **Behavior**: 
-  1. **Plan**: Planner splits the task into a Directed Acyclic Graph (DAG) of subtasks.
-  2. **Map**: Workers execute subtasks in parallel, respecting dependencies.
-  3. **Reduce**: Manager synthesizes the final result from the task outputs.
-- **Best for**: Complex engineering tasks, long-form content generation, or data processing pipelines.
+### 4. MAP_REDUCE (`MapReduceStrategy.ts`)
+- **Logic**: Recursively divides tasks into a tree structure. 
+- **Reduce Phase**: Results are "Reduced" (merged) pairwise or in batches as child nodes complete.
+- **Best For**: Massive data ingestion or codebase refactoring.
 
-### 5. MOA (Mixture of Agents)
-- **Role Requirement**: Multiple specialized experts and one `MANAGER`.
-- **Behavior**: Experts generate initial responses in parallel. The Manager then synthesizes these high-quality outputs into a single optimal response.
-- **Best for**: Complex reasoning where multiple "expert opinions" improve the final quality.
+### 5. MOA - Mixture of Agents (`MOAStrategy.ts`)
+- **Logic**: Expert agents all see the same task and produce independent drafts. 
+- **Ensemble**: A meta-agent (Aggregator) consumes these drafts to produce a single response that captures the best of all worlds.
 
-### 6. GRAPH
-- **Role Requirement**: Agents defined in `edges`.
-- **Behavior**: Strictly follows a defined state machine/graph. Execution flows from one agent to the next based on pre-defined edges.
-- **Best for**: Fixed workflows, legal compliance processes, or rigid pipelines.
+### 6. GRAPH (`GraphStrategy.ts`)
+- **Logic**: Executes a static state machine defined in the `WorkflowConfig.edges` property.
+- **Transitions**: Each agent output is evaluated to determine the next node in the graph, supporting complex loops and conditional branching.
 
-### 7. EVENT_DRIVEN
-- **Role Requirement**: Agents assigned to event listeners.
-- **Behavior**: Agents react to events emitted during execution. Supports asynchronous-like coordination pattern.
-- **Best for**: Real-time monitoring, reactive systems, or unpredictable workflows.
+### 7. EVENT_DRIVEN (`EventDrivenStrategy.ts`)
+- **Logic**: Agents are registered to `events` (e.g., `GITHUB_PUSH`). 
+- **Trigger**: The strategy publishes the event to the bus and orchestrates the reactive agents designated for that specific trigger.
 
-### 8. DECENTRALIZED_SWARM
-- **Behavior**: Agents autonomously collaborate via the global blackboard. They evaluate the collective state and contribute until "SIGNAL_STABILIZATION" is reached.
-- **Best for**: Emergent problem solving, research, or multi-faceted optimization.
+### 8. DEBATE (`DebateStrategy.ts`)
+- **Logic**: Two agents (Proposer and Opponent) cycle through $N$ rounds of critique. 
+- **Resolution**: The complete dialogue history is presented to a third-party `JUDGE` for the final verdict.
 
-### 9. DEBATE
-- **Behavior**: Agents present arguments and critique each other's points over multiple rounds. A `JUDGE` provides the final verdict.
-- **Best for**: Ethics analysis, strategic planning, or adversarial testing.
+## Tracing & Observability
 
-## Observability & Tracing
+Every strategy execution is wrapped in an **OTel Span** (OpenTelemetry). Traces are hierarchically nested:
+1. `workflow_execution`
+2. `paradigm_strategy_run`
+3. `agent_execution` (via `executeAgentTask`)
 
-Orchestra uses OpenTelemetry (OTel) to provide hierarchical traces of every workflow. Spans are automatically nested:
-- `workflow_execution`
-  - `paradigm_execution` (e.g. `map_reduce`)
-    - `agent_execution` (Agent ID)
-      - `llm_call`
-
-View traces in any OTel-compatible backend or via the `TelemetryStudio` in the app.
+This allows developers to see exactly where a "Debate" loop stalled or which worker in a "MapReduce" tree took the longest.
