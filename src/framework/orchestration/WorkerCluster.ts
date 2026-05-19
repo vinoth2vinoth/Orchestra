@@ -7,6 +7,7 @@ export class WorkerCluster {
     private activeTaskByNode: Map<string, string | null> = new Map();
     private isInitialized: boolean = false;
     private monitorTimer: NodeJS.Timeout | null = null;
+    private unsubscribeHeartbeats: (() => void) | null = null;
     
     public init(count: number = 3) {
         if (this.isInitialized) return;
@@ -21,10 +22,17 @@ export class WorkerCluster {
         globalMessageBus.subscribe('WORKER_HEARTBEATS', (msg: any) => {
             this.nodeLastHeartbeat.set(msg.nodeId, msg.timestamp);
             this.activeTaskByNode.set(msg.nodeId, msg.activeTaskId);
+        }).then(unsubscribe => {
+            if (!this.isInitialized) {
+                unsubscribe();
+                return;
+            }
+            this.unsubscribeHeartbeats = unsubscribe;
         });
         
         // Monitor
         this.monitorTimer = setInterval(() => this.checkHealth(), 5000);
+        if (this.monitorTimer.unref) this.monitorTimer.unref();
     }
     
     private spawnWorker(nodeId: string) {
@@ -68,6 +76,25 @@ export class WorkerCluster {
     
     // For test
     public getWorkers() { return this.workers; }
+
+    public stop() {
+        for (const worker of this.workers) {
+            worker.stop();
+        }
+
+        this.workers = [];
+        this.nodeLastHeartbeat.clear();
+        this.activeTaskByNode.clear();
+        this.isInitialized = false;
+
+        if (this.monitorTimer) {
+            clearInterval(this.monitorTimer);
+            this.monitorTimer = null;
+        }
+
+        this.unsubscribeHeartbeats?.();
+        this.unsubscribeHeartbeats = null;
+    }
 }
 
 export const globalWorkerCluster = new WorkerCluster();

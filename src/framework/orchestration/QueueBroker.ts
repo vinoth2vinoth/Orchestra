@@ -145,9 +145,10 @@ export class QueueBroker {
     }
 
     public subscribeToAllTasks(handler: (task: TaskPayload) => Promise<void> | void, subscriberId: string = crypto.randomUUID()) {
-        if (this.allTasksSubscribers.some(s => s.id === subscriberId)) return;
+        this.unsubscribeFromAllTasks(subscriberId);
         this.allTasksSubscribers.push({ id: subscriberId, handler, active: false });
         void this.dispatchAvailableTasks();
+        return () => this.unsubscribeFromAllTasks(subscriberId);
     }
 
     public async publishResult(result: TaskResult) {
@@ -189,6 +190,16 @@ export class QueueBroker {
         this.allTasksSubscribers = [];
         this.nextSubscriberIndex = 0;
         this.dispatching = false;
+    }
+
+    public unsubscribeFromAllTasks(subscriberId: string): void {
+        this.allTasksSubscribers = this.allTasksSubscribers.filter(subscriber => subscriber.id !== subscriberId);
+        if (this.allTasksSubscribers.length === 0) {
+            this.nextSubscriberIndex = 0;
+        } else {
+            this.nextSubscriberIndex = this.nextSubscriberIndex % this.allTasksSubscribers.length;
+        }
+        void this.dispatchAvailableTasks();
     }
 
     private async handleTaskResult(result: TaskResult) {

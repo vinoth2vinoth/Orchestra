@@ -13,6 +13,7 @@ export class WorkerNode {
     private isRunning: boolean = false;
     private heartbeatTimer: NodeJS.Timeout | null = null;
     private activeTaskId: string | null = null;
+    private unsubscribeFromTasks: (() => void) | null = null;
     
     constructor(nodeId: string) {
         this.nodeId = nodeId;
@@ -50,7 +51,7 @@ export class WorkerNode {
         }, 2000);
         
         // Use general TASK topic for dynamic agent scaling (H2 fixed)
-        globalQueueBroker.subscribeToAllTasks(async (task: TaskPayload) => {
+        this.unsubscribeFromTasks = globalQueueBroker.subscribeToAllTasks(async (task: TaskPayload) => {
             if (!this.isRunning) return;
             this.activeTaskId = task.taskId;
             console.log(`[WorkerNode ${this.nodeId}] Picked up task ${task.taskId} for agent ${task.agentId}`);
@@ -105,7 +106,13 @@ export class WorkerNode {
 
     public stop() {
         this.isRunning = false;
-        if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+        if (this.heartbeatTimer) {
+            clearInterval(this.heartbeatTimer);
+            this.heartbeatTimer = null;
+        }
+        this.unsubscribeFromTasks?.();
+        this.unsubscribeFromTasks = null;
+        this.activeTaskId = null;
         console.log(`[WorkerNode ${this.nodeId}] Stopped.`);
     }
     
@@ -113,6 +120,12 @@ export class WorkerNode {
     public crash() {
         console.error(`[WorkerNode ${this.nodeId}] CRASHING (simulated).`);
         this.isRunning = false;
-        if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+        if (this.heartbeatTimer) {
+            clearInterval(this.heartbeatTimer);
+            this.heartbeatTimer = null;
+        }
+        this.unsubscribeFromTasks?.();
+        this.unsubscribeFromTasks = null;
+        this.activeTaskId = null;
     }
 }

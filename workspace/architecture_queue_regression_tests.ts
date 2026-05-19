@@ -1,4 +1,15 @@
 import { QueueBroker, TaskPayload } from '../src/framework/orchestration/QueueBroker.ts';
+import { WorkerNode } from '../src/framework/orchestration/WorkerNode.ts';
+import { WorkerCluster } from '../src/framework/orchestration/WorkerCluster.ts';
+import { globalQueueBroker } from '../src/framework/orchestration/QueueBroker.ts';
+import { BaseAgent } from '../src/framework/agents/BaseAgent.ts';
+import { globalRegistry } from '../src/framework/agents/AgentRegistry.ts';
+import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
+import type { LLMConfig } from '../src/framework/llm/ProviderRegistry.ts';
+
+function assert(condition: unknown, message: string) {
+  if (!condition) throw new Error(message);
+}
 
 function task(id: string, maxAttempts = 3): TaskPayload {
   return {
@@ -17,6 +28,20 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     promise,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms))
   ]);
+}
+
+class QueueLifecycleAgent extends BaseAgent {
+  public calls = 0;
+
+  constructor(id: string) {
+    const llmConfig: LLMConfig = { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' };
+    super(id, 'Queue lifecycle test agent.', 'WORKER', new MemoryMesh({ tenantId: 'queue-lifecycle', namespace: id }), llmConfig, [], undefined, undefined, undefined, id);
+  }
+
+  async execute(task: any): Promise<any> {
+    this.calls++;
+    return { processed: task.id, calls: this.calls };
+  }
 }
 
 async function testRetryThenSuccess() {
@@ -88,10 +113,97 @@ async function testExpiredLeaseRecovery() {
   }
 }
 
+async function testQueueSubscriberUnregisters() {
+  const broker = new QueueBroker({ visibilityTimeoutMs: 100, defaultMaxAttempts: 2 });
+  try {
+    await broker.resetForTests();
+
+    let firstWorkerCalls = 0;
+    const unsubscribe = broker.subscribeToAllTasks(async (payload) => {
+      firstWorkerCalls++;
+      await broker.publishResult({
+        taskId: payload.taskId,
+        status: 'success',
+        result: { worker: 'old' },
+        leaseId: payload.leaseId
+      });
+    }, 'restartable-worker');
+
+    unsubscribe();
+
+    let secondWorkerCalls = 0;
+    broker.subscribeToAllTasks(async (payload) => {
+      secondWorkerCalls++;
+      await broker.publishResult({
+        taskId: payload.taskId,
+        status: 'success',
+        result: { worker: 'new' },
+        leaseId: payload.leaseId
+      });
+    }, 'restartable-worker');
+
+    const result = await withTimeout(broker.publish(task(`unsubscribe-${Date.now()}`)), 2000);
+    assert(result.status === 'success', `Expected success after subscriber restart, got ${JSON.stringify(result)}`);
+    assert(result.result?.worker === 'new', `Expected new worker to handle task, got ${JSON.stringify(result)}`);
+    assert(firstWorkerCalls === 0, `Stopped subscriber should not receive tasks, got ${firstWorkerCalls}`);
+    assert(secondWorkerCalls === 1, `New subscriber should receive one task, got ${secondWorkerCalls}`);
+  } finally {
+    broker.dispose();
+  }
+}
+
+async function testWorkerNodeCanRestartWithSameId() {
+  const agentId = `worker-lifecycle-agent-${Date.now()}`;
+  const workerId = `worker-lifecycle-node-${Date.now()}`;
+  const agent = new QueueLifecycleAgent(agentId);
+  const firstWorker = new WorkerNode(workerId);
+  const secondWorker = new WorkerNode(workerId);
+
+  try {
+    await globalQueueBroker.resetForTests();
+    globalRegistry.register(agent);
+
+    firstWorker.start();
+    firstWorker.stop();
+    secondWorker.start();
+
+    const result = await withTimeout(globalQueueBroker.publish({
+      ...task(`worker-restart-${Date.now()}`),
+      agentId,
+      payload: { id: 'worker-restart' }
+    }), 4000);
+
+    assert(result.status === 'success', `Expected restarted worker success, got ${JSON.stringify(result)}`);
+    assert(result.result?.processed === 'worker-restart', `Expected restarted worker result, got ${JSON.stringify(result)}`);
+    assert(agent.calls === 1, `Expected one agent execution after restart, got ${agent.calls}`);
+  } finally {
+    firstWorker.stop();
+    secondWorker.stop();
+    globalRegistry.unregister(agentId);
+    await globalQueueBroker.resetForTests();
+  }
+}
+
+async function testWorkerClusterStopsAllWorkers() {
+  const cluster = new WorkerCluster();
+  cluster.init(2);
+  assert(cluster.getWorkers().length === 2, `Expected 2 workers, got ${cluster.getWorkers().length}`);
+
+  cluster.stop();
+  assert(cluster.getWorkers().length === 0, `Expected stopped cluster to clear workers, got ${cluster.getWorkers().length}`);
+
+  cluster.init(1);
+  assert(cluster.getWorkers().length === 1, `Expected cluster to restart with 1 worker, got ${cluster.getWorkers().length}`);
+  cluster.stop();
+}
+
 const tests = [
   ['queue retry then success', testRetryThenSuccess],
   ['queue dead letter after max attempts', testDeadLetterAfterMaxAttempts],
-  ['queue expired lease recovery', testExpiredLeaseRecovery]
+  ['queue expired lease recovery', testExpiredLeaseRecovery],
+  ['queue subscriber unregisters', testQueueSubscriberUnregisters],
+  ['worker node can restart with same id', testWorkerNodeCanRestartWithSameId],
+  ['worker cluster stops all workers', testWorkerClusterStopsAllWorkers]
 ] as const;
 
 const results = [];
