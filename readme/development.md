@@ -31,7 +31,7 @@ npm run test
 npm run test:security
 npm run test:architecture
 npm run test:reliability
-npm run test:redis
+npm run test:state-backend
 npm run test:projects
 npm run examples:check
 npm run build
@@ -40,13 +40,13 @@ npm audit --audit-level=low
 
 The security suite covers path safety, API auth, tool modes, and state-correctness regressions. The architecture suite covers queue behavior, runtime context, memory persistence, audit log integrity, plugin governance, and audit regressions. The reliability suite covers checkpoint recovery, event reload, queue crash recovery, and graph resume behavior. The project suite submits representative easy-to-complex workflow prompts through the framework simulation path.
 
-`npm run test:redis` requires a running Redis instance:
+`npm run test:state-backend` requires a running Valkey or Redis-compatible key-value backend:
 
 ```bash
-ORCHESTRA_STATE_ADAPTER=redis REDIS_URL=redis://localhost:6379 npm run test:redis
+ORCHESTRA_STATE_ADAPTER=keyvalue ORCHESTRA_STATE_URL=redis://localhost:6379 npm run test:state-backend
 ```
 
-GitHub Actions runs this command against a Redis service container.
+GitHub Actions runs this command against a Valkey service container. The URL uses the common `redis://` protocol scheme because that is what compatible clients and services use.
 
 ## Examples
 
@@ -63,7 +63,7 @@ The files in `examples/` are typechecked by `npm run examples:check`. They are i
 - `ORCHESTRA_TOOL_MODE=mock` keeps external tools deterministic by default.
 - `ORCHESTRA_ENABLE_CODE_SANDBOX=false` is the safe default unless execution is isolated outside Node's `vm`.
 - `ORCHESTRA_ENABLE_EXPERIMENTAL_PLUGINS=false` keeps demo or stochastic plugins out of the default runtime.
-- `ORCHESTRA_STATE_ADAPTER=redis` with `REDIS_URL` should be used when testing distributed state behavior beyond the in-memory adapter.
+- `ORCHESTRA_STATE_ADAPTER=keyvalue` with `ORCHESTRA_STATE_URL` should be used when testing distributed state behavior beyond the in-memory adapter.
 
 ## Pull Request Expectations
 

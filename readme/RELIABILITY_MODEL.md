@@ -28,10 +28,10 @@ Run it directly:
 npm run test:reliability
 ```
 
-Redis-backed durability checks live in `workspace/redis_durability_tests.ts` and verify state-adapter parity plus queue lease recovery using Redis-backed global state:
+Key-value backend durability checks live in `workspace/state_backend_durability_tests.ts` and verify state-adapter parity plus queue lease recovery using a shared backend. Valkey is the recommended open-source target; Redis-compatible services are supported by protocol:
 
 ```bash
-ORCHESTRA_STATE_ADAPTER=redis REDIS_URL=redis://localhost:6379 npm run test:redis
+ORCHESTRA_STATE_ADAPTER=keyvalue ORCHESTRA_STATE_URL=redis://localhost:6379 npm run test:state-backend
 ```
 
 It is also included in:
@@ -69,7 +69,7 @@ Remaining production work:
 
 Remaining production work:
 
-- Redis-backed or broker-backed integration tests in CI
+- Key-value backend or broker-backed integration tests in CI
 - idempotency keys at tool boundary
 - operator commands for DLQ inspection and replay
 
@@ -99,7 +99,7 @@ The security regression suite verifies 500 concurrent increments finish at 500 w
 
 Remaining production work:
 
-- Redis adapter parity tests for all atomic operations
+- Key-value backend adapter parity tests for all atomic operations
 - lock TTL expiry tests
 - cross-process state contention benchmarks
 
@@ -110,8 +110,8 @@ For production or multi-tenant deployments:
 ```env
 ORCHESTRA_API_TOKEN=
 ORCHESTRA_ENCRYPTION_KEY=
-ORCHESTRA_STATE_ADAPTER=redis
-REDIS_URL=
+ORCHESTRA_STATE_ADAPTER=keyvalue
+ORCHESTRA_STATE_URL=
 ORCHESTRA_TOOL_MODE=disabled
 ORCHESTRA_ENABLE_CODE_SANDBOX=false
 ORCHESTRA_ENABLE_EXPERIMENTAL_PLUGINS=false
@@ -121,18 +121,18 @@ In-memory state, queue, and event adapters should be treated as local developmen
 
 ## Adapter Status
 
-| Capability | Memory Adapter | Redis Adapter |
+| Capability | Memory Adapter | Key-Value Backend Adapter |
 | --- | --- | --- |
 | Local development | Verified | Supported |
-| Atomic `mutate` / `increment` / `compareAndSwap` | Verified by `test:security` | Verified by `test:redis` |
-| Locks | Basic in-process lock | Redis lock with TTL |
-| Lists / event history | Verified locally | Verified by Redis parity tests |
-| Queue lease recovery | Verified by `test:architecture` and `test:reliability` | Verified by `test:redis` |
+| Atomic `mutate` / `increment` / `compareAndSwap` | Verified by `test:security` | Verified by `test:state-backend` |
+| Locks | Basic in-process lock | Backend lock with TTL |
+| Lists / event history | Verified locally | Verified by key-value backend parity tests |
+| Queue lease recovery | Verified by `test:architecture` and `test:reliability` | Verified by `test:state-backend` |
 | Cross-process durability | Not intended | First CI-backed proof in place |
 
 ## Next Reliability Milestones
 
-- Expand Redis-backed CI service tests.
+- Expand key-value backend CI service tests.
 - Add workflow interruption and resume tests that cross a real process boundary.
 - Add event replay snapshots for failed workflows.
 - Add DLQ replay tooling.

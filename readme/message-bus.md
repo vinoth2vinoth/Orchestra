@@ -14,7 +14,7 @@ C4Context
     
     System_Boundary(bus, "Message Bus") {
         System(local, "LocalMessageBus", "In-process (Memory)")
-        System(redis, "RedisMessageBus", "Cross-process (Redis)")
+        System(keyvalue, "Redis-compatible MessageBus", "Cross-process key-value Pub/Sub")
     }
     
     System_Boundary(wp, "Worker Plane") {
@@ -35,9 +35,9 @@ Used for small-scale deployments and development.
 - **In-Memory**: Uses a `Map<string, handler[]>` to manage subscriptions.
 - **Async Simulation**: Uses `setTimeout(() => handler(), 0)` to maintain asynchronous behavior even within a single thread.
 
-### 2. RedisMessageBus (src/framework/core/RedisMessageBus.ts)
+### 2. Redis-compatible MessageBus (src/framework/core/RedisMessageBus.ts)
 Used for production clusters to coordinate across multiple containers/pods.
-- **Concurrency**: Leverages Redis Pub/Sub for high-throughput event fanning.
+- **Concurrency**: Leverages Redis-compatible Pub/Sub for high-throughput event fanning.
 - **Scalability**: Allows any number of worker nodes to connect to the same bus.
 
 ### 3. Resilience Features

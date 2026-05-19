@@ -8,7 +8,7 @@ In production, Orchestra should be deployed as a decoupled set of services:
 
 - **Control Plane (API & Orchestrator):** Handles user sessions, UI rendering, and high-level routing. Deployed as a scalable REST/WebSocket service.
 - **Worker Plane:** An auto-scaling group of stateless `WorkerNode` containers. These do not serve traffic; they only consume from the `MessageBus`.
-- **Event Mesh:** A robust, externalized Message Bus (e.g., Redis, RabbitMQ, or AWS SQS) used for inter-service communication.
+- **Event Mesh:** A robust, externalized Message Bus (e.g., Valkey/Redis-compatible Pub/Sub, RabbitMQ, or AWS SQS) used for inter-service communication.
 
 ```mermaid
 graph TD
@@ -27,7 +27,7 @@ The local `.orchestra/` filesystem is not suitable for ephemeral container envir
 
 - **Checkpointing:** Replace the local `Checkpointer` with a cloud-native adapter:
     - **Firestore/Postgres:** For high-integrity workflow state.
-    - **Redis:** For low-latency task handoffs.
+    - **Valkey or Redis-compatible backend:** For low-latency task handoffs.
 - **Memory Mesh:** Transition from local vector JSON files to an enterprise Vector DB (e.g., Pinecone, Weaviate, or Vertex AI Search).
 
 ## 3. Security & Compliance
@@ -39,7 +39,6 @@ The local `.orchestra/` filesystem is not suitable for ephemeral container envir
 ## 4. Horizontal Auto-Scaling (KEDA)
 
 Orchestra workers can be scaled dynamically based on **Queue Depth**:
-- Use **KEDA** (Kubernetes Event-driven Autoscaling) to monitor your Redis or SQS queue.
+- Use **KEDA** (Kubernetes Event-driven Autoscaling) to monitor your Valkey/Redis-compatible, RabbitMQ, or SQS queue.
 - When 100 research tasks are published, KEDA can instantly scale the `WorkerNode` deployment from 1 to 50 pods.
 - Once the queue is depleted, pods are terminated to save compute costs.
-

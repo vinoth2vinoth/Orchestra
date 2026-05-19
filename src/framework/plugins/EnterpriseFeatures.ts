@@ -76,7 +76,7 @@ export class TokenBudgetPlugin implements AgenticPlugin {
 export class SemanticCachePlugin implements AgenticPlugin {
     name = 'SemanticCachePlugin';
     version = '1.0.0';
-    // Fast O(1) hash cache for repeated identical objectives. Real implementations connect to Pinecone/Redis.
+    // Fast O(1) hash cache for repeated identical objectives. Real implementations connect to a vector store or key-value backend.
     private cache = new Map<string, { result: any; expiresAt: number }>();
     private readonly ttlMs = Number(process.env.ORCHESTRA_SEMANTIC_CACHE_TTL_MS || 60 * 60 * 1000);
     private readonly maxEntries = Number(process.env.ORCHESTRA_SEMANTIC_CACHE_MAX_ENTRIES || 10000);
@@ -1140,21 +1140,21 @@ export class SLAEnforcerPlugin implements AgenticPlugin {
     }
 }
 
-// 32. Durable Execution (Temporal/Inngest Simulation via Redis/Postgres)
+// 32. Durable Execution (Temporal/Inngest Simulation via key-value backend/Postgres)
 export class DurableExecutionPlugin implements AgenticPlugin {
     name = 'DurableExecutionPlugin';
     version = '1.0.0';
 
     async onWorkflowSleep(threadId: string, state: any) {
         // Serialize agent state to database when waiting for HITL or external APIs
-        console.log(`[DurableExecution] Serializing workflow state for Thread [${threadId}] to durable backend (Redis/Postgres). State size: ${JSON.stringify(state).length} bytes`);
+        console.log(`[DurableExecution] Serializing workflow state for Thread [${threadId}] to durable backend (key-value/Postgres). State size: ${JSON.stringify(state).length} bytes`);
         globalEventStore.append({
             type: 'SYSTEM_HOOK',
             sourceAgentId: 'TEMPORAL_WORKER',
             threadId,
             payload: { action: 'STATE_FLUSHED_TO_DB', approvalId: state.approvalId }
         });
-        // Simulated: await redis.set(`orchestra_state_${state.approvalId}`, JSON.stringify(state));
+        // Simulated: await stateBackend.set(`orchestra_state_${state.approvalId}`, JSON.stringify(state));
     }
 
     async onWorkflowResume(threadId: string, state: any) {
@@ -1166,7 +1166,7 @@ export class DurableExecutionPlugin implements AgenticPlugin {
             threadId,
             payload: { action: 'STATE_REHYDRATED', approvalId: state.approvalId }
         });
-        // Simulated: await redis.get(`orchestra_state_${state.approvalId}`);
+        // Simulated: await stateBackend.get(`orchestra_state_${state.approvalId}`);
     }
 }
 

@@ -16,8 +16,8 @@ flowchart TD
     end
 
     subgraph "Distributed Implementations"
-        RMB[RedisMessageBus]
-        RSA[RedisStateAdapter]
+        RMB[RedisCompatibleMessageBus]
+        RSA[KeyValueStateAdapter]
     end
 
     subgraph "External Dependencies"
@@ -167,13 +167,13 @@ In-process implementation with built-in rate limiting and circuit breaker:
 - **Circuit Breaker**: Trips when rate limit exceeded, auto-resets after 10 seconds
 - **Async Dispatch**: Uses `setTimeout` to simulate distributed nature
 
-### RedisMessageBus (`core/RedisMessageBus.ts`)
+### Redis-compatible Message Bus (`core/RedisMessageBus.ts`)
 
-Distributed implementation using Redis Pub/Sub:
+Distributed implementation using Redis-compatible Pub/Sub:
 
 - **Trace Propagation**: Automatically injects `traceId` for distributed debugging
 - **JSON Envelope**: Wraps messages in structured envelope with trace metadata
-- **Dynamic Subscription**: Auto-subscribes/unsubscribes Redis channels based on handler count
+- **Dynamic Subscription**: Auto-subscribes/unsubscribes backend channels based on handler count
 
 ## 4. State Adapter (`core/StateAdapter.ts`)
 
@@ -198,14 +198,15 @@ export interface StateAdapter {
 | Implementation | File | Use Case |
 |----------------|------|----------|
 | `MemoryStateAdapter` | `core/StateAdapter.ts` | Development, single-instance |
-| `RedisStateAdapter` | `core/RedisStateAdapter.ts` | Production, multi-container |
+| `KeyValueStateAdapter` | `core/KeyValueStateAdapter.ts` | Production, multi-container |
+| `RedisStateAdapter` | `core/RedisStateAdapter.ts` | Backward-compatible alias |
 
-### RedisStateAdapter Details
+### KeyValueStateAdapter Details
 
-- **Connection**: Configurable via `REDIS_URL` env var (default: `redis://localhost:6379`)
+- **Connection**: Configurable via `ORCHESTRA_STATE_URL`, `VALKEY_URL`, or legacy `REDIS_URL`
 - **Retry Strategy**: Exponential backoff (50ms initial, 2000ms max)
 - **Error Handling**: Logs errors without crashing
-- **Lock Mechanism**: Uses Redis `SET NX PX` for distributed locking
+- **Lock Mechanism**: Uses the Redis-compatible `SET NX PX` command for distributed locking
 
 ## 5. Error Handler (`core/ErrorHandler.ts`)
 
@@ -417,8 +418,10 @@ flowchart LR
 
 | Variable | Default | Used By | Purpose |
 |----------|---------|---------|---------|
-| `ORCHESTRA_STATE_ADAPTER` | `memory` | `StateAdapter` | Set to `redis` for durable distributed queue/state |
-| `REDIS_URL` | `redis://localhost:6379` | `RedisMessageBus`, `RedisStateAdapter` | Distributed messaging and state |
+| `ORCHESTRA_STATE_ADAPTER` | `memory` | `StateAdapter` | Set to `keyvalue` for durable distributed queue/state |
+| `ORCHESTRA_STATE_URL` | unset | `KeyValueStateAdapter` | Valkey or Redis-compatible state backend URL |
+| `VALKEY_URL` | unset | `KeyValueStateAdapter` | Convenience alias for Valkey deployments |
+| `REDIS_URL` | unset | Compatibility alias | Legacy Redis-compatible URL support |
 | `MAX_CONCURRENCY` | `8` | `WorkerPool` | Resource throttling limit |
 
 ## Error Handling

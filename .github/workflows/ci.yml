@@ -15,12 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
-      redis:
-        image: redis:7-alpine
+      keyvalue:
+        image: valkey/valkey:8-alpine
         ports:
           - 6379:6379
         options: >-
-          --health-cmd "redis-cli ping"
+          --health-cmd "valkey-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -47,11 +47,11 @@ jobs:
       - name: Run tests
         run: npm run test
 
-      - name: Run Redis durability tests
-        run: npm run test:redis
+      - name: Run key-value backend durability tests
+        run: npm run test:state-backend
         env:
-          ORCHESTRA_STATE_ADAPTER: redis
-          REDIS_URL: redis://localhost:6379
+          ORCHESTRA_STATE_ADAPTER: keyvalue
+          ORCHESTRA_STATE_URL: redis://localhost:6379
 
       - name: Check examples
         run: npm run examples:check

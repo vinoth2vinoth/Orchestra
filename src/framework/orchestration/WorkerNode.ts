@@ -6,7 +6,7 @@ import { globalEventStore } from '../core/EventStore.ts';
 /**
  * Represents an independent worker process/node that pulls tasks from the QueueBroker.
  * In a real distributed system, this would be a separate process or server instance
- * pulling jobs via Redis/BullMQ.
+ * pulling jobs via a durable queue backend.
  */
 export class WorkerNode {
     private nodeId: string;

@@ -1,7 +1,7 @@
 import { WorkflowConfig } from './Orchestrator.ts';
 
 /**
- * Interface for pluggable state storage (e.g. Redis, Firestore, S3).
+ * Interface for pluggable state storage (e.g. Valkey-compatible key-value backends, Firestore, S3).
  * This removes the "Monolithic God Object" memory dependency.
  */
 export interface IStateProvider {

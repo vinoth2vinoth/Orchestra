@@ -1,17 +1,19 @@
-import Redis from 'ioredis';
+import RedisCompatibleClient from 'ioredis';
 import { IMessageBus } from './MessageBus.ts';
+import { getKeyValueStateUrl } from './KeyValueStateAdapter.ts';
 
 /**
- * Distributed MessageBus implementation using Redis Pub/Sub.
+ * Distributed MessageBus implementation using Redis-compatible Pub/Sub.
+ * Prefer Valkey or another open-source compatible backend when possible.
  */
 export class RedisMessageBus implements IMessageBus {
-    private pub: Redis;
-    private sub: Redis;
+    private pub: RedisCompatibleClient;
+    private sub: RedisCompatibleClient;
     private handlers: Map<string, Array<(message: any) => void>> = new Map();
 
-    constructor(url: string = process.env.REDIS_URL || 'redis://localhost:6379') {
-        this.pub = new Redis(url);
-        this.sub = new Redis(url);
+    constructor(url: string = getKeyValueStateUrl() || 'redis://localhost:6379') {
+        this.pub = new RedisCompatibleClient(url);
+        this.sub = new RedisCompatibleClient(url);
 
         this.sub.on('message', (channel, message) => {
             const topicHandlers = this.handlers.get(channel) || [];

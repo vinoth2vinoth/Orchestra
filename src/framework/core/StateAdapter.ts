@@ -1,9 +1,9 @@
-import { RedisStateAdapter } from './RedisStateAdapter.ts';
+import { KeyValueStateAdapter, getKeyValueStateUrl } from './KeyValueStateAdapter.ts';
 
 /**
  * StateAdapter provides an interface for distributed state management.
  * This allows the framework to scale horizontally by offloading local memory
- * to shared providers like Redis.
+ * to shared providers such as Valkey or another Redis-compatible key-value backend.
  */
 export interface StateAdapter {
     get<T>(key: string): Promise<T | null>;
@@ -94,7 +94,7 @@ export class MemoryStateAdapter implements StateAdapter {
 
     public async getRange(key: string, start: number, end: number): Promise<any[]> {
         const list = this.lists.get(key) || [];
-        // Redis lrange end is inclusive, let's match that behavior
+        // Redis-compatible lrange end is inclusive, so match that behavior.
         const actualEnd = end === -1 ? list.length : end + 1;
         return list.slice(start, actualEnd);
     }
@@ -112,15 +112,18 @@ export class MemoryStateAdapter implements StateAdapter {
 
 export function createStateAdapter(): StateAdapter {
     const requested = (process.env.ORCHESTRA_STATE_ADAPTER || '').toLowerCase();
-    if (requested === 'redis' || (!requested && process.env.REDIS_URL && process.env.NODE_ENV === 'production')) {
-        if (!process.env.REDIS_URL) {
-            throw new Error('ORCHESTRA_STATE_ADAPTER=redis requires REDIS_URL.');
+    const keyValueAliases = ['keyvalue', 'key-value', 'valkey', 'redis-compatible', 'redis'];
+    const stateUrl = getKeyValueStateUrl();
+
+    if (keyValueAliases.includes(requested) || (!requested && stateUrl && process.env.NODE_ENV === 'production')) {
+        if (!stateUrl) {
+            throw new Error('ORCHESTRA_STATE_ADAPTER=keyvalue requires ORCHESTRA_STATE_URL, VALKEY_URL, or legacy REDIS_URL.');
         }
-        return new RedisStateAdapter(process.env.REDIS_URL);
+        return new KeyValueStateAdapter(stateUrl);
     }
 
     if (process.env.NODE_ENV === 'production' && requested !== 'memory') {
-        console.warn('[StateAdapter] Production is using in-memory state. Set ORCHESTRA_STATE_ADAPTER=redis and REDIS_URL for durable distributed execution.');
+        console.warn('[StateAdapter] Production is using in-memory state. Set ORCHESTRA_STATE_ADAPTER=keyvalue and ORCHESTRA_STATE_URL for durable distributed execution.');
     }
 
     return new MemoryStateAdapter();

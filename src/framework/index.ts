@@ -13,7 +13,7 @@ export type { QueueTaskRecord, QueueTaskStatus, TaskPayload, TaskResult } from '
 export { MemoryMesh } from './memory/MemoryMesh.ts';
 export { MemoryStateAdapter, createStateAdapter, globalStateAdapter } from './core/StateAdapter.ts';
 export type { StateAdapter } from './core/StateAdapter.ts';
-export { RedisStateAdapter } from './core/RedisStateAdapter.ts';
+export { KeyValueStateAdapter } from './core/KeyValueStateAdapter.ts';
 export { EventStore, globalEventStore } from './core/EventStore.ts';
 
 export { globalToolRegistry, ToolRegistry } from './tools/ToolRegistry.ts';

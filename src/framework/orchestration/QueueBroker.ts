@@ -44,7 +44,7 @@ interface TaskSubscriber {
  * QueueBroker provides lease/ACK/NACK semantics for distributed execution.
  *
  * The local broker still dispatches in-process worker callbacks, but task state is
- * stored through StateAdapter so Redis deployments can recover pending/leased work.
+ * stored through StateAdapter so distributed deployments can recover pending/leased work.
  */
 export class QueueBroker {
     private completionCallbacks: Map<string, (result: TaskResult) => void> = new Map();

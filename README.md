@@ -27,7 +27,7 @@ Most agent projects start as a chat loop and grow into a fragile web of prompts,
 - **Governed tool execution**: Zod schemas, explicit tool modes, path-safe workspace APIs, and policy hooks.
 - **Recoverable agent workflows**: checkpointing, approval resume, event sourcing, and shared state adapters.
 - **Observable execution**: event logs, OpenTelemetry tracing hooks, telemetry dashboards, and stress/regression tests.
-- **Distributed-oriented runtime**: worker pools, queue broker semantics, leases, retries, dead-letter handling, and Redis-ready state.
+- **Distributed-oriented runtime**: worker pools, queue broker semantics, leases, retries, dead-letter handling, and pluggable key-value state backends.
 - **Human-in-the-loop control**: approval gates for high-risk actions and deterministic workflow resume.
 
 Natural use cases include AI code review systems, autonomous research teams, workflow copilots, internal agent platforms, telemetry-heavy LLM experiments, and agent governance prototypes.
@@ -40,7 +40,7 @@ Before production or multi-tenant use:
 
 - Set `ORCHESTRA_API_TOKEN`; do not rely on `ORCHESTRA_DEV_AUTH_BYPASS`.
 - Set `ORCHESTRA_ENCRYPTION_KEY`.
-- Use `ORCHESTRA_STATE_ADAPTER=redis` with `REDIS_URL` for durable distributed state.
+- Use `ORCHESTRA_STATE_ADAPTER=keyvalue` with `ORCHESTRA_STATE_URL` for durable distributed state. Valkey is the recommended open-source backend; Redis-compatible services remain supported by protocol.
 - Keep `ORCHESTRA_ENABLE_CODE_SANDBOX=false` unless code runs in a real container or process sandbox.
 - Keep tool execution modes explicit with `ORCHESTRA_TOOL_MODE` or per-tool mode variables.
 - Enable `ORCHESTRA_ENABLE_EXPERIMENTAL_PLUGINS=true` only when you accept demo or stochastic plugin behavior.
@@ -191,7 +191,7 @@ npm run test
 npm run test:security
 npm run test:architecture
 npm run test:reliability
-npm run test:redis
+npm run test:state-backend
 npm run examples:check
 npm run build
 npm audit --audit-level=low
@@ -199,7 +199,7 @@ npm audit --audit-level=low
 
 `npm run check` is the canonical contributor confidence command: it typechecks, runs regression tests, verifies examples, and builds the project.
 
-`npm run test:redis` requires `REDIS_URL` and `ORCHESTRA_STATE_ADAPTER=redis`; GitHub Actions runs it against a Redis service container.
+`npm run test:state-backend` requires `ORCHESTRA_STATE_URL` and `ORCHESTRA_STATE_ADAPTER=keyvalue`; GitHub Actions runs it against a Valkey service container.
 
 ## Supported Providers
 

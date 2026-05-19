@@ -41,7 +41,7 @@ Environment:
 | `npm run test:security` | Passed |
 | `npm run test:architecture` | Passed |
 | `npm run test:reliability` | Passed |
-| `npm run test:redis` | Passed in CI with Redis service container |
+| `npm run test:state-backend` | Passed in CI with Valkey service container |
 | `npm run test:projects` | Passed |
 | `npm run test` | Passed |
 | `npm run examples:check` | Passed |
@@ -109,4 +109,4 @@ From the latest security stress run:
 - State adapter concurrency: 500 atomic operations completed with 0 collisions
 - Queue lease recovery: crashed lease recovered on the second attempt
 
-Future benchmark work should add Redis-backed runs, cross-process restart tests, larger DAG tests, and provider-specific latency/cost measurements.
+Future benchmark work should add more key-value backend runs, cross-process restart tests, larger DAG tests, and provider-specific latency/cost measurements.
