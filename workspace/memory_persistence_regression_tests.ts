@@ -43,8 +43,69 @@ async function testPersistedSemanticMemoryReloadsByTenantAndNamespace() {
   }
 }
 
+async function testDefaultTenantSearchDoesNotLeakExplicitTenantMemories() {
+  const memory = new MemoryMesh({
+    namespace: `memory-default-tenant-${Date.now()}`,
+    tenantId: 'tenant-a'
+  });
+
+  await memory.addSemanticMemory('tenant alpha private release plan', ['release']);
+  await memory.addSemanticMemory('tenant beta private payroll plan', ['payroll'], 'tenant-b');
+
+  const defaultTenantResults = await memory.searchSimilarMemories('private payroll plan', 5);
+  if (defaultTenantResults.some(result => result.tenantId === 'tenant-b')) {
+    throw new Error(`Default tenant search leaked tenant-b memory: ${JSON.stringify(defaultTenantResults)}`);
+  }
+
+  const tenantBResults = await memory.searchSimilarMemories('private payroll plan', 5, 'tenant-b');
+  if (!tenantBResults.some(result => String(result.content).includes('payroll'))) {
+    throw new Error(`Explicit tenant-b search did not find its own memory: ${JSON.stringify(tenantBResults)}`);
+  }
+}
+
+async function testMemorySearchCacheInvalidatesAfterWrite() {
+  const memory = new MemoryMesh({
+    namespace: `memory-cache-${Date.now()}`,
+    tenantId: 'tenant-cache'
+  });
+
+  const firstResults = await memory.searchSimilarMemories('new cache marker', 3);
+  if (firstResults.length !== 0) {
+    throw new Error(`Expected empty initial search, got ${JSON.stringify(firstResults)}`);
+  }
+
+  await memory.addSemanticMemory('brand new cache marker appears after first search', ['cache']);
+  const secondResults = await memory.searchSimilarMemories('new cache marker', 3);
+  if (!secondResults.some(result => String(result.content).includes('appears after first search'))) {
+    throw new Error(`Search cache returned stale results after write: ${JSON.stringify(secondResults)}`);
+  }
+}
+
+async function testRetrieveContextRespectsDefaultTenant() {
+  const memory = new MemoryMesh({
+    namespace: `memory-context-${Date.now()}`,
+    tenantId: 'tenant-a'
+  });
+
+  await memory.addWorkingMemory('shared-thread', 'agent-a', { marker: 'tenant-a-visible' });
+  await memory.addWorkingMemory('shared-thread', 'agent-b', { marker: 'tenant-b-hidden' }, 'tenant-b');
+
+  const defaultTenantContext = memory.retrieveContext('WORKING', { threadId: 'shared-thread' });
+  if (defaultTenantContext.some(entry => JSON.stringify(entry.content).includes('tenant-b-hidden'))) {
+    throw new Error(`retrieveContext leaked tenant-b working memory: ${JSON.stringify(defaultTenantContext)}`);
+  }
+
+  const tenantBContext = memory.retrieveContext('WORKING', { threadId: 'shared-thread' }, 'tenant-b');
+  if (!tenantBContext.some(entry => JSON.stringify(entry.content).includes('tenant-b-hidden'))) {
+    throw new Error(`retrieveContext did not return tenant-b memory when requested: ${JSON.stringify(tenantBContext)}`);
+  }
+}
+
 const tests = [
-  ['persisted semantic memory reloads by tenant namespace', testPersistedSemanticMemoryReloadsByTenantAndNamespace]
+  ['persisted semantic memory reloads by tenant namespace', testPersistedSemanticMemoryReloadsByTenantAndNamespace],
+  ['default tenant search does not leak explicit tenant memories', testDefaultTenantSearchDoesNotLeakExplicitTenantMemories],
+  ['memory search cache invalidates after write', testMemorySearchCacheInvalidatesAfterWrite],
+  ['retrieve context respects default tenant', testRetrieveContextRespectsDefaultTenant]
 ] as const;
 
 const results = [];

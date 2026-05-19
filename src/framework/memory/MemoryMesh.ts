@@ -54,6 +54,10 @@ export class MemoryMesh {
         }
     }
 
+    private effectiveTenantId(tenantId?: string): string | undefined {
+        return tenantId || this.defaultTenantId;
+    }
+
     public getCoreMemory(contextId: string): CoreMemoryState {
         if (!this.coreMemories.has(contextId)) {
             // Initialize with default empty blocks
@@ -85,27 +89,29 @@ export class MemoryMesh {
 
     // 1. Working Memory (Short-term context, sliding window)
     public async addWorkingMemory(threadId: string, agentId: string, content: any, tenantId?: string) {
-        await this.store('WORKING', content, { threadId, agentId }, false, tenantId);
-        this.checkConsolidation(threadId);
+        const effectiveTenantId = this.effectiveTenantId(tenantId);
+        await this.store('WORKING', content, { threadId, agentId }, false, effectiveTenantId);
+        this.checkConsolidation(threadId, effectiveTenantId);
         this.garbageCollect();
     }
 
     // 2. Episodic Memory (Historical runs, event sequences)
     public async addEpisodicMemory(agentId: string, eventSequence: any, tenantId?: string) {
-        await this.store('EPISODIC', eventSequence, { agentId }, false, tenantId);
+        await this.store('EPISODIC', eventSequence, { agentId }, false, this.effectiveTenantId(tenantId));
         this.garbageCollect();
     }
 
     // 3. Semantic Memory (Factual knowledge, Vector/Graph capabilities in prod)
     public async addSemanticMemory(fact: string, entities: string[], tenantId?: string) {
-        await this.store('SEMANTIC', fact, { entities }, true, tenantId);
+        await this.store('SEMANTIC', fact, { entities }, true, this.effectiveTenantId(tenantId));
         this.garbageCollect();
     }
 
     // 4. Procedural Memory (Instructions, learned rules, SOPs)
     public async addProceduralMemory(rule: string, skill: string, tenantId?: string, importance: number = 1) {
         // Check for existing rules that might be similar to avoid redundancy
-        const existingResults = await this.searchSimilarMemories(rule, 1, tenantId);
+        const effectiveTenantId = this.effectiveTenantId(tenantId);
+        const existingResults = await this.searchSimilarMemories(rule, 1, effectiveTenantId);
         const existingRule = existingResults.find(m => m.tier === 'PROCEDURAL');
 
         if (existingRule && typeof existingRule.content === 'string') {
@@ -116,7 +122,7 @@ export class MemoryMesh {
             }
         }
 
-        await this.store('PROCEDURAL', rule, { skill, importance }, true, tenantId);
+        await this.store('PROCEDURAL', rule, { skill, importance }, true, effectiveTenantId);
         this.garbageCollect();
     }
 
@@ -143,6 +149,7 @@ export class MemoryMesh {
         };
 
         this.memories.push(entry);
+        this.searchCache.clear();
 
         if (vectorize && typeof finalContent === 'string') {
             this.tfidf.addDocument(finalContent);
@@ -162,7 +169,8 @@ export class MemoryMesh {
      * Search across Semantic and Procedural memories (Local TF-IDF Integration)
      */
     public async searchSimilarMemories(query: string, topK: number = 3, tenantId?: string): Promise<VectorMemoryEntry[]> {
-        const cacheKey = `${query}:${topK}:${tenantId || 'GLOBAL'}`;
+        const effectiveTenantId = this.effectiveTenantId(tenantId);
+        const cacheKey = `${query}:${topK}:${effectiveTenantId || 'GLOBAL'}`;
         if (this.searchCache.has(cacheKey)) {
             return this.searchCache.get(cacheKey)!;
         }
@@ -174,7 +182,7 @@ export class MemoryMesh {
             const memory = this.memories[i];
             if (measure > 0 && memory) {
                 // Multi-tenant isolation check before proceeding
-                if (tenantId && memory.tenantId && memory.tenantId !== tenantId) {
+                if (effectiveTenantId && memory.tenantId !== effectiveTenantId) {
                     return;
                 }
                 
@@ -252,14 +260,17 @@ export class MemoryMesh {
      * Enterprise GraphRAG: Insert nodes and edges into the Knowledge Graph
      */
     public addGraphTriplets(triplets: Array<{ source: string, target: string, relation: string, sourceMeta?: any, targetMeta?: any }>, tenantId?: string) {
+        const effectiveTenantId = this.effectiveTenantId(tenantId);
         for (const t of triplets) {
+            const sourceKey = this.graphNodeKey(t.source, effectiveTenantId);
+            const targetKey = this.graphNodeKey(t.target, effectiveTenantId);
             // Upsert source node
-            if (!this.graphNodes.has(t.source)) {
-                this.graphNodes.set(t.source, { label: t.source, properties: t.sourceMeta || {}, tenantId });
+            if (!this.graphNodes.has(sourceKey)) {
+                this.graphNodes.set(sourceKey, { label: t.source, properties: t.sourceMeta || {}, tenantId: effectiveTenantId });
             }
             // Upsert target node
-            if (!this.graphNodes.has(t.target)) {
-                this.graphNodes.set(t.target, { label: t.target, properties: t.targetMeta || {}, tenantId });
+            if (!this.graphNodes.has(targetKey)) {
+                this.graphNodes.set(targetKey, { label: t.target, properties: t.targetMeta || {}, tenantId: effectiveTenantId });
             }
             // Add directed edge
             this.graphEdges.push({
@@ -267,7 +278,7 @@ export class MemoryMesh {
                 target: t.target,
                 relation: t.relation,
                 weight: 1.0,
-                tenantId
+                tenantId: effectiveTenantId
             });
         }
     }
@@ -276,6 +287,7 @@ export class MemoryMesh {
      * Enterprise GraphRAG: Sub-graph retrieval for context augmentation
      */
     public retrieveGraphContext(startNodes: string[], maxDepth: number = 2, tenantId?: string): string {
+        const effectiveTenantId = this.effectiveTenantId(tenantId);
         const visited = new Set<string>();
         const resultTriplets: string[] = [];
 
@@ -285,7 +297,7 @@ export class MemoryMesh {
             visited.add(node);
 
             // Find all outgoing edges
-            const edges = this.graphEdges.filter(e => e.source === node && (!tenantId || e.tenantId === tenantId));
+            const edges = this.graphEdges.filter(e => e.source === node && (!effectiveTenantId || e.tenantId === effectiveTenantId));
             for (const edge of edges) {
                 resultTriplets.push(`[${edge.source}] --(${edge.relation})--> [${edge.target}]`);
                 traverse(edge.target, currentDepth + 1);
@@ -297,6 +309,10 @@ export class MemoryMesh {
         }
 
         return resultTriplets.join('\n');
+    }
+
+    private graphNodeKey(label: string, tenantId?: string): string {
+        return `${tenantId || 'GLOBAL'}:${label}`;
     }
 
     private rebuildVectorIndex() {
@@ -350,18 +366,26 @@ export class MemoryMesh {
     /**
      * Memory Consolidation (Moving highly-referenced Working memory into Episodic/Semantic)
      */
-    private checkConsolidation(threadId: string) {
-        const working = this.memories.filter(m => m.tier === 'WORKING' && m.metadata.threadId === threadId);
+    private checkConsolidation(threadId: string, tenantId?: string) {
+        const working = this.memories.filter(m =>
+            m.tier === 'WORKING' &&
+            m.metadata.threadId === threadId &&
+            (!tenantId || m.tenantId === tenantId)
+        );
         
         // Simple heuristic: if we have more than 5 working memories for a thread, compress them
         if (working.length > 5) {
             const summary = `Compressed episode of ${working.length} events. Core theme: Sub-task progression.`;
             
             // Consolidate into Episodic
-            this.addEpisodicMemory('SYSTEM', { originThread: threadId, summary });
+            this.addEpisodicMemory('SYSTEM', { originThread: threadId, summary }, tenantId);
 
             // Purge old working memory
-            this.memories = this.memories.filter(m => !(m.tier === 'WORKING' && m.metadata.threadId === threadId));
+            this.memories = this.memories.filter(m => !(
+                m.tier === 'WORKING' &&
+                m.metadata.threadId === threadId &&
+                (!tenantId || m.tenantId === tenantId)
+            ));
             
             // Rebuild index to maintain alignment
             this.rebuildVectorIndex();
@@ -375,10 +399,12 @@ export class MemoryMesh {
         }
     }
 
-    public retrieveContext(tier: MemoryTier, queryMetadata: Record<string, any>): MemoryEntry[] {
+    public retrieveContext(tier: MemoryTier, queryMetadata: Record<string, any>, tenantId?: string): MemoryEntry[] {
+        const effectiveTenantId = this.effectiveTenantId(tenantId);
         // ... same as before
         return this.memories.filter(m => {
             if (m.tier !== tier) return false;
+            if (effectiveTenantId && m.tenantId !== effectiveTenantId) return false;
             for (const key in queryMetadata) {
                 if (m.metadata[key] !== queryMetadata[key]) return false;
             }

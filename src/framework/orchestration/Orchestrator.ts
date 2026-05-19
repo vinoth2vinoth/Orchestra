@@ -444,7 +444,10 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                 if (typeof currentTask === 'string') {
                     currentTask += `\n\n${blackboardContext}`;
                 } else if (typeof currentTask === 'object') {
-                    currentTask.blackboard = blackboard; // Internal objects are trusted
+                    // Copy before attaching blackboard so concurrent workflows do not mutate caller-owned task objects.
+                    currentTask = Array.isArray(currentTask)
+                        ? Object.assign([...currentTask], { blackboard })
+                        : { ...currentTask, blackboard };
                 }
             }
 

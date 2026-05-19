@@ -16,6 +16,15 @@ class EchoManagerAgent extends BaseAgent {
   }
 }
 
+class BlackboardEchoAgent extends BaseAgent {
+  async execute(task: any): Promise<any> {
+    return {
+      marker: task.blackboard?.marker,
+      originalTaskMutated: Object.prototype.hasOwnProperty.call(task, 'blackboard')
+    };
+  }
+}
+
 async function testRuntimePluginAndTenantScope() {
   const pluginRegistry = new PluginRegistry();
   pluginRegistry.register({
@@ -58,8 +67,78 @@ async function testRuntimePluginAndTenantScope() {
   }
 }
 
+async function testConcurrentWorkflowsDoNotMutateSharedTaskObject() {
+  const pluginRegistry = new PluginRegistry();
+  pluginRegistry.register({
+    name: 'ConcurrentTaskDelayPlugin',
+    version: '1.0.0',
+    async beforeAgentExecute(_agentId, task) {
+      if (task?.requestId === 'shared-task') {
+        await new Promise(resolve => setTimeout(resolve, 30));
+      }
+    }
+  });
+
+  const sharedTask = { requestId: 'shared-task' };
+  const agentA = new BlackboardEchoAgent(
+    'TenantAManager',
+    'Echoes tenant A blackboard.',
+    'MANAGER',
+    new MemoryMesh(),
+    { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+    [],
+    undefined,
+    undefined,
+    undefined,
+    'tenant-a-manager'
+  );
+  const agentB = new BlackboardEchoAgent(
+    'TenantBManager',
+    'Echoes tenant B blackboard.',
+    'MANAGER',
+    new MemoryMesh(),
+    { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+    [],
+    undefined,
+    undefined,
+    undefined,
+    'tenant-b-manager'
+  );
+
+  const configA: WorkflowConfig = {
+    paradigm: 'HIERARCHICAL',
+    agents: [agentA],
+    maxRetries: 0,
+    blackboard: { marker: 'tenant-a-only' },
+    runtime: { pluginRegistry, tenantId: 'tenant-a' }
+  };
+  const configB: WorkflowConfig = {
+    paradigm: 'HIERARCHICAL',
+    agents: [agentB],
+    maxRetries: 0,
+    blackboard: { marker: 'tenant-b-only' },
+    runtime: { pluginRegistry, tenantId: 'tenant-b' }
+  };
+
+  const [resultA, resultB] = await Promise.all([
+    new Orchestrator().executeWorkflow(sharedTask, configA, `RUNTIME_ISO_A_${Date.now()}`),
+    new Orchestrator().executeWorkflow(sharedTask, configB, `RUNTIME_ISO_B_${Date.now()}`)
+  ]);
+
+  if (resultA.marker !== 'tenant-a-only') {
+    throw new Error(`Tenant A saw the wrong blackboard: ${JSON.stringify(resultA)}`);
+  }
+  if (resultB.marker !== 'tenant-b-only') {
+    throw new Error(`Tenant B saw the wrong blackboard: ${JSON.stringify(resultB)}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(sharedTask, 'blackboard')) {
+    throw new Error(`Shared task object was mutated: ${JSON.stringify(sharedTask)}`);
+  }
+}
+
 const tests = [
-  ['runtime plugin and tenant scope', testRuntimePluginAndTenantScope]
+  ['runtime plugin and tenant scope', testRuntimePluginAndTenantScope],
+  ['concurrent workflows do not mutate shared task object', testConcurrentWorkflowsDoNotMutateSharedTaskObject]
 ] as const;
 
 const results = [];
