@@ -10,5 +10,6 @@ coverage/
 !.env.example
 server_logs.txt
 server-test.*.log
+.orchestra-private/
 orchestra_workspace/.orchestra/checkpoints/
 orchestra_workspace/.orchestra/audit/*.jsonl
