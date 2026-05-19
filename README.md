@@ -192,6 +192,7 @@ npm run test:security
 npm run test:architecture
 npm run test:reliability
 npm run test:state-backend
+npm run test:sdk
 npm run test:reference
 npm run example:code-review
 npm run examples:check
@@ -242,6 +243,7 @@ python_orchestra/  Standalone Python prototype
 
 ### Core Runtime
 
+- [SDK Guide](docs/SDK.md)
 - [Development Guide](readme/development.md)
 - [Core Orchestration](readme/core-orchestration.md)
 - [Agent Personas](readme/agent-personas.md)
@@ -294,6 +296,7 @@ npm run test:reference
 These examples are typechecked by `npm run examples:check` so API drift is caught before merge. Prefer `npm run test` and `npm run check` when validating framework behavior.
 
 Examples import from the public `src/framework/index.ts` SDK entrypoint rather than deep internal modules.
+`npm run test:sdk` enforces this import boundary and validates the public SDK surface.
 
 ## Roadmap
 

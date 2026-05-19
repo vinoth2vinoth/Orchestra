@@ -32,6 +32,7 @@ npm run test:security
 npm run test:architecture
 npm run test:reliability
 npm run test:state-backend
+npm run test:sdk
 npm run test:reference
 npm run test:projects
 npm run example:code-review
@@ -40,7 +41,7 @@ npm run build
 npm audit --audit-level=low
 ```
 
-The security suite covers path safety, API auth, tool modes, and state-correctness regressions. The architecture suite covers queue behavior, runtime context, memory persistence, audit log integrity, plugin governance, and audit regressions. The reliability suite covers checkpoint recovery, event reload, queue crash recovery, and graph resume behavior. The reference suite validates the deterministic code-review and release-governance example. The project suite submits representative easy-to-complex workflow prompts through the framework simulation path.
+The security suite covers path safety, API auth, tool modes, and state-correctness regressions. The architecture suite covers queue behavior, runtime context, memory persistence, audit log integrity, plugin governance, and audit regressions. The reliability suite covers checkpoint recovery, event reload, queue crash recovery, and graph resume behavior. The SDK suite validates public entrypoint imports, adapter contracts, memory search, runtime plugins, and example import hygiene. The reference suite validates the deterministic code-review and release-governance example. The project suite submits representative easy-to-complex workflow prompts through the framework simulation path.
 
 `npm run test:state-backend` requires a running Valkey or Redis-compatible key-value backend:
 
@@ -52,7 +53,7 @@ GitHub Actions runs this command against a Valkey service container. The URL use
 
 ## Examples
 
-The files in `examples/` are typechecked by `npm run examples:check`. They are intended as current API references and should compile without requiring live LLM calls. Examples should import from `src/framework/index.ts`, the public SDK entrypoint, instead of deep internal modules. If an example becomes aspirational or depends on an external service, mark that clearly in the file and keep the default check deterministic.
+The files in `examples/` are typechecked by `npm run examples:check`. They are intended as current API references and should compile without requiring live LLM calls. Examples should import from `src/framework/index.ts`, the public SDK entrypoint, instead of deep internal modules. `npm run test:sdk` enforces this boundary. If an example becomes aspirational or depends on an external service, mark that clearly in the file and keep the default check deterministic.
 
 The reference code-review workflow can be run without provider API spend:
 

@@ -24,6 +24,7 @@ npm audit --audit-level=low
 - security and correctness regressions
 - architecture regressions
 - reliability gauntlet
+- SDK contract regression
 - reference app regression
 - project-submission simulations
 
@@ -43,6 +44,7 @@ Environment:
 | `npm run test:architecture` | Passed |
 | `npm run test:reliability` | Passed |
 | `npm run test:state-backend` | Passed in CI with Valkey service container |
+| `npm run test:sdk` | Passed |
 | `npm run test:reference` | Passed |
 | `npm run example:code-review` | Passed |
 | `npm run test:projects` | Passed |
@@ -88,6 +90,16 @@ Some local Windows sandbox runs may need to be rerun outside the sandbox because
 - event-store reload into a fresh store instance
 - queue lease recovery after simulated worker crash
 - graph workflow resume from checkpoint without rerunning completed agents
+
+## SDK Contract Coverage
+
+`npm run test:sdk` currently verifies:
+
+- workflows can be constructed from `src/framework/index.ts` exports only
+- `StateAdapter` supports set/get, atomic increment, compare-and-swap, list operations, and locks
+- `MemoryMesh` can add and retrieve semantic memory through the public API
+- scoped `PluginRegistry` hooks can modify agent task input and result output
+- examples do not import from deep framework internals
 
 ## Project-Submission Simulations
 
