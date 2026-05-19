@@ -190,6 +190,7 @@ npm run lint
 npm run test
 npm run test:security
 npm run test:architecture
+npm run test:reliability
 npm run examples:check
 npm run build
 npm audit --audit-level=low
@@ -239,6 +240,8 @@ python_orchestra/  Standalone Python prototype
 - [Core Orchestration](readme/core-orchestration.md)
 - [Agent Personas](readme/agent-personas.md)
 - [Paradigms](readme/PARADIGMS.md)
+- [Reliability Model](readme/RELIABILITY_MODEL.md)
+- [Benchmarks and Validation](BENCHMARKS.md)
 - [Memory Layer](readme/memory-layer.md)
 - [Message Bus](readme/message-bus.md)
 - [Worker Nodes](readme/worker-nodes.md)

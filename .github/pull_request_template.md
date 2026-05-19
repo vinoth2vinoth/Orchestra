@@ -6,6 +6,7 @@
 
 - [ ] `npm run lint`
 - [ ] `npm run test`
+- [ ] `npm run test:reliability`
 - [ ] `npm run examples:check`
 - [ ] `npm run build`
 - [ ] `npm audit --audit-level=low`

@@ -30,13 +30,14 @@ npm run lint
 npm run test
 npm run test:security
 npm run test:architecture
+npm run test:reliability
 npm run test:projects
 npm run examples:check
 npm run build
 npm audit --audit-level=low
 ```
 
-The security suite covers path safety, tool modes, and state-correctness regressions. The architecture suite covers queue behavior, runtime context, memory persistence, audit log integrity, plugin governance, and audit regressions. The project suite submits representative easy-to-complex workflow prompts through the framework simulation path.
+The security suite covers path safety, API auth, tool modes, and state-correctness regressions. The architecture suite covers queue behavior, runtime context, memory persistence, audit log integrity, plugin governance, and audit regressions. The reliability suite covers checkpoint recovery, event reload, queue crash recovery, and graph resume behavior. The project suite submits representative easy-to-complex workflow prompts through the framework simulation path.
 
 ## Examples
 
