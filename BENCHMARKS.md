@@ -24,6 +24,7 @@ npm audit --audit-level=low
 - security and correctness regressions
 - architecture regressions
 - reliability gauntlet
+- durability restart regression
 - SDK contract regression
 - reference app regression
 - project-submission simulations
@@ -43,6 +44,7 @@ Environment:
 | `npm run test:security` | Passed |
 | `npm run test:architecture` | Passed |
 | `npm run test:reliability` | Passed |
+| `npm run test:durability` | Passed |
 | `npm run test:state-backend` | Passed in CI with Valkey service container |
 | `npm run test:sdk` | Passed |
 | `npm run test:reference` | Passed |
@@ -90,6 +92,16 @@ Some local Windows sandbox runs may need to be rerun outside the sandbox because
 - event-store reload into a fresh store instance
 - queue lease recovery after simulated worker crash
 - graph workflow resume from checkpoint without rerunning completed agents
+
+## Durability Restart Coverage
+
+`npm run test:durability` currently verifies:
+
+- duplicate publishes with the same `taskId` attach to the existing in-flight task
+- completed duplicate publishes replay the stored result
+- a fresh broker instance can recover an expired lease created by a previous broker
+- stale results from expired leases cannot complete a currently leased task
+- recovered tasks finish on the second attempt without being lost or double-enqueued
 
 ## SDK Contract Coverage
 

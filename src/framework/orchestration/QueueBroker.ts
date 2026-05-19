@@ -9,6 +9,7 @@ export interface TaskPayload {
     payload: any;
     blackboard: any;
     maxAttempts?: number;
+    leaseId?: string;
 }
 
 export interface TaskResult {
@@ -16,6 +17,7 @@ export interface TaskResult {
     status: 'success' | 'error';
     result?: any;
     error?: string;
+    leaseId?: string;
 }
 
 export type QueueTaskStatus = 'PENDING' | 'LEASED' | 'SUCCEEDED' | 'FAILED' | 'DEAD_LETTER';
@@ -29,6 +31,7 @@ export interface QueueTaskRecord {
     updatedAt: number;
     leaseUntil?: number;
     leasedBy?: string;
+    leaseId?: string;
     lastError?: string;
     result?: any;
     brokerId?: string;
@@ -47,7 +50,7 @@ interface TaskSubscriber {
  * stored through StateAdapter so distributed deployments can recover pending/leased work.
  */
 export class QueueBroker {
-    private completionCallbacks: Map<string, (result: TaskResult) => void> = new Map();
+    private completionCallbacks: Map<string, Set<(result: TaskResult) => void>> = new Map();
     private allTasksSubscribers: TaskSubscriber[] = [];
     private nextSubscriberIndex = 0;
     private dispatching = false;
@@ -85,6 +88,28 @@ export class QueueBroker {
 
     public async publish(task: TaskPayload): Promise<TaskResult> {
         const now = Date.now();
+        const existing = await this.getTaskRecord(task.taskId);
+        if (existing) {
+            if (existing.status === 'SUCCEEDED') {
+                return { taskId: task.taskId, status: 'success', result: existing.result };
+            }
+
+            if (existing.status === 'DEAD_LETTER') {
+                return {
+                    taskId: task.taskId,
+                    status: 'error',
+                    error: existing.lastError || `Task ${task.taskId} is already in the dead-letter queue`
+                };
+            }
+
+            return new Promise(resolve => {
+                this.addCompletionCallback(task.taskId, resolve);
+                if (existing.status === 'PENDING') {
+                    void this.enqueuePendingTask(task.taskId).then(() => this.dispatchAvailableTasks());
+                }
+            });
+        }
+
         const record: QueueTaskRecord = {
             task,
             status: 'PENDING',
@@ -96,7 +121,7 @@ export class QueueBroker {
         };
 
         return new Promise((resolve) => {
-            this.completionCallbacks.set(task.taskId, resolve);
+            this.addCompletionCallback(task.taskId, resolve);
             globalStateAdapter.set(this.recordKey(task.taskId), record)
                 .then(() => this.addKnownTask(task.taskId))
                 .then(() => globalStateAdapter.mutate<string[]>(this.pendingKey, current => {
@@ -105,7 +130,7 @@ export class QueueBroker {
                 }))
                 .then(() => this.dispatchAvailableTasks())
                 .catch(err => {
-                    this.completionCallbacks.delete(task.taskId);
+                    this.clearCompletionCallbacks(task.taskId);
                     resolve({
                         taskId: task.taskId,
                         status: 'error',
@@ -137,11 +162,13 @@ export class QueueBroker {
     }
 
     public async ackTask(taskId: string, result: any): Promise<void> {
-        await this.handleTaskResult({ taskId, status: 'success', result });
+        const record = await this.getTaskRecord(taskId);
+        await this.handleTaskResult({ taskId, status: 'success', result, leaseId: record?.leaseId });
     }
 
     public async nackTask(taskId: string, error: string): Promise<void> {
-        await this.handleTaskResult({ taskId, status: 'error', error });
+        const record = await this.getTaskRecord(taskId);
+        await this.handleTaskResult({ taskId, status: 'error', error, leaseId: record?.leaseId });
     }
 
     public async getTaskRecord(taskId: string): Promise<QueueTaskRecord | null> {
@@ -166,8 +193,25 @@ export class QueueBroker {
 
     private async handleTaskResult(result: TaskResult) {
         const record = await this.getTaskRecord(result.taskId);
-        if (!record || record.status === 'SUCCEEDED' || record.status === 'DEAD_LETTER') return;
-        if (record.brokerId && record.brokerId !== this.brokerId) return;
+        if (!record) return;
+        if (record.status === 'SUCCEEDED') {
+            this.resolveTask({ taskId: result.taskId, status: 'success', result: record.result });
+            return;
+        }
+        if (record.status === 'DEAD_LETTER') {
+            this.resolveTask({
+                taskId: result.taskId,
+                status: 'error',
+                error: record.lastError || `Task ${result.taskId} is already in the dead-letter queue`
+            });
+            return;
+        }
+        if (record.leaseUntil && record.leaseUntil < Date.now()) {
+            return;
+        }
+        if (record.leaseId && result.leaseId !== record.leaseId) {
+            return;
+        }
 
         if (result.status === 'success') {
             const nextRecord: QueueTaskRecord = {
@@ -176,6 +220,7 @@ export class QueueBroker {
                 result: result.result,
                 leaseUntil: undefined,
                 leasedBy: undefined,
+                leaseId: undefined,
                 updatedAt: Date.now()
             };
             await globalStateAdapter.set(this.recordKey(result.taskId), nextRecord);
@@ -194,7 +239,9 @@ export class QueueBroker {
             lastError: error,
             leaseUntil: undefined,
             leasedBy: undefined,
-            updatedAt: Date.now()
+            leaseId: undefined,
+            updatedAt: Date.now(),
+            brokerId: this.brokerId
         };
 
         await globalStateAdapter.set(this.recordKey(record.task.taskId), nextRecord);
@@ -265,13 +312,17 @@ export class QueueBroker {
                 if (!record || record.status !== 'PENDING') continue;
 
                 const now = Date.now();
+                const leaseId = crypto.randomUUID();
                 const leased: QueueTaskRecord = {
                     ...record,
+                    task: { ...record.task, leaseId },
                     status: 'LEASED',
                     attempts: record.attempts + 1,
                     leasedBy: subscriber.id,
+                    leaseId,
                     leaseUntil: now + this.visibilityTimeoutMs,
-                    updatedAt: now
+                    updatedAt: now,
+                    brokerId: this.brokerId
                 };
                 await globalStateAdapter.set(this.recordKey(taskId), leased);
 
@@ -335,11 +386,21 @@ export class QueueBroker {
     }
 
     private resolveTask(result: TaskResult) {
-        const callback = this.completionCallbacks.get(result.taskId);
-        if (callback) {
-            callback(result);
+        const callbacks = this.completionCallbacks.get(result.taskId);
+        if (callbacks) {
+            callbacks.forEach(callback => callback(result));
             this.completionCallbacks.delete(result.taskId);
         }
+    }
+
+    private addCompletionCallback(taskId: string, callback: (result: TaskResult) => void) {
+        const callbacks = this.completionCallbacks.get(taskId) || new Set<(result: TaskResult) => void>();
+        callbacks.add(callback);
+        this.completionCallbacks.set(taskId, callbacks);
+    }
+
+    private clearCompletionCallbacks(taskId: string) {
+        this.completionCallbacks.delete(taskId);
     }
 
     private recordKey(taskId: string) {

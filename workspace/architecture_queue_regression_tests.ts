@@ -28,10 +28,10 @@ async function testRetryThenSuccess() {
     broker.subscribeToAllTasks(async (payload) => {
       attempts++;
       if (attempts === 1) {
-        await broker.publishResult({ taskId: payload.taskId, status: 'error', error: 'first failure' });
+        await broker.publishResult({ taskId: payload.taskId, status: 'error', error: 'first failure', leaseId: payload.leaseId });
         return;
       }
-      await broker.publishResult({ taskId: payload.taskId, status: 'success', result: { ok: true, attempts } });
+      await broker.publishResult({ taskId: payload.taskId, status: 'success', result: { ok: true, attempts }, leaseId: payload.leaseId });
     }, 'queue-test-worker');
 
     const result = await withTimeout(broker.publish(task(`retry-${Date.now()}`)), 2000);
@@ -50,7 +50,7 @@ async function testDeadLetterAfterMaxAttempts() {
 
     const taskId = `dlq-${Date.now()}`;
     broker.subscribeToAllTasks(async (payload) => {
-      await broker.publishResult({ taskId: payload.taskId, status: 'error', error: 'permanent failure' });
+      await broker.publishResult({ taskId: payload.taskId, status: 'error', error: 'permanent failure', leaseId: payload.leaseId });
     }, 'queue-dlq-worker');
 
     const result = await withTimeout(broker.publish(task(taskId, 2)), 2000);
@@ -76,7 +76,7 @@ async function testExpiredLeaseRecovery() {
       if (attempts === 1) {
         return; // Simulate a worker crash after leasing but before ACK/NACK.
       }
-      await broker.publishResult({ taskId: payload.taskId, status: 'success', result: { recovered: true, attempts } });
+      await broker.publishResult({ taskId: payload.taskId, status: 'success', result: { recovered: true, attempts }, leaseId: payload.leaseId });
     }, 'queue-recovery-worker');
 
     const result = await withTimeout(broker.publish(task(`lease-${Date.now()}`)), 3000);

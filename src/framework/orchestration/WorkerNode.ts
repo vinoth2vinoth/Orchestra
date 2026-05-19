@@ -81,7 +81,8 @@ export class WorkerNode {
                     await globalQueueBroker.publishResult({
                         taskId: task.taskId,
                         status: 'success',
-                        result
+                        result,
+                        leaseId: task.leaseId
                     });
                 }
             } catch (err: any) {
@@ -90,7 +91,8 @@ export class WorkerNode {
                     await globalQueueBroker.publishResult({
                         taskId: task.taskId,
                         status: 'error',
-                        error: err.message
+                        error: err.message,
+                        leaseId: task.leaseId
                     });
                 }
             } finally {

@@ -191,6 +191,7 @@ npm run test
 npm run test:security
 npm run test:architecture
 npm run test:reliability
+npm run test:durability
 npm run test:state-backend
 npm run test:sdk
 npm run test:reference
@@ -244,6 +245,7 @@ python_orchestra/  Standalone Python prototype
 ### Core Runtime
 
 - [SDK Guide](docs/SDK.md)
+- [Reliability Contract](docs/RELIABILITY.md)
 - [Development Guide](readme/development.md)
 - [Core Orchestration](readme/core-orchestration.md)
 - [Agent Personas](readme/agent-personas.md)

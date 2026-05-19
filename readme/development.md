@@ -31,6 +31,7 @@ npm run test
 npm run test:security
 npm run test:architecture
 npm run test:reliability
+npm run test:durability
 npm run test:state-backend
 npm run test:sdk
 npm run test:reference
@@ -41,7 +42,7 @@ npm run build
 npm audit --audit-level=low
 ```
 
-The security suite covers path safety, API auth, tool modes, and state-correctness regressions. The architecture suite covers queue behavior, runtime context, memory persistence, audit log integrity, plugin governance, and audit regressions. The reliability suite covers checkpoint recovery, event reload, queue crash recovery, and graph resume behavior. The SDK suite validates public entrypoint imports, adapter contracts, memory search, runtime plugins, and example import hygiene. The reference suite validates the deterministic code-review and release-governance example. The project suite submits representative easy-to-complex workflow prompts through the framework simulation path.
+The security suite covers path safety, API auth, tool modes, and state-correctness regressions. The architecture suite covers queue behavior, runtime context, memory persistence, audit log integrity, plugin governance, and audit regressions. The reliability suite covers checkpoint recovery, event reload, queue crash recovery, and graph resume behavior. The durability suite covers duplicate task publish behavior and fresh-broker recovery after expired leases. The SDK suite validates public entrypoint imports, adapter contracts, memory search, runtime plugins, and example import hygiene. The reference suite validates the deterministic code-review and release-governance example. The project suite submits representative easy-to-complex workflow prompts through the framework simulation path.
 
 `npm run test:state-backend` requires a running Valkey or Redis-compatible key-value backend:
 

@@ -119,7 +119,8 @@ async function testQueueBrokerUsesKeyValueGlobalState() {
       await broker.publishResult({
         taskId: payload.taskId,
         status: 'success',
-        result: { recovered: true, attempts }
+        result: { recovered: true, attempts },
+        leaseId: payload.leaseId
       });
     }, 'state-backend-queue-worker');
 

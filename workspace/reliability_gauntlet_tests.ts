@@ -129,7 +129,8 @@ async function testQueueLeaseRecoveryAfterWorkerCrash() {
       await broker.publishResult({
         taskId: payload.taskId,
         status: 'success',
-        result: { recovered: true, attempts }
+        result: { recovered: true, attempts },
+        leaseId: payload.leaseId
       });
     }, 'gauntlet-lease-worker');
 
