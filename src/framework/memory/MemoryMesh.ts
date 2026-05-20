@@ -1,5 +1,5 @@
 import { MemoryEntry, MemoryTier, CoreMemoryState } from '../core/types.ts';
-import { globalEventStore } from '../core/EventStore.ts';
+import { EventStore, globalEventStore } from '../core/EventStore.ts';
 import { StateAdapter, globalStateAdapter } from '../core/StateAdapter.ts';
 import natural from 'natural';
 
@@ -17,6 +17,7 @@ export interface MemoryMeshOptions {
     tenantId?: string;
     persist?: boolean;
     stateAdapter?: StateAdapter;
+    eventStore?: EventStore;
 }
 
 /**
@@ -33,6 +34,7 @@ export class MemoryMesh {
     private readonly defaultTenantId?: string;
     private readonly persistEnabled: boolean;
     private readonly stateAdapter: StateAdapter;
+    private readonly eventStore: EventStore;
     
     // GraphRAG Structures
     private graphEdges: Array<{ source: string, target: string, relation: string, weight: number, tenantId?: string }> = [];
@@ -46,6 +48,7 @@ export class MemoryMesh {
         this.defaultTenantId = options.tenantId;
         this.persistEnabled = options.persist ?? process.env.ORCHESTRA_MEMORY_PERSISTENCE === 'true';
         this.stateAdapter = options.stateAdapter || globalStateAdapter;
+        this.eventStore = options.eventStore || globalEventStore;
 
         if (this.persistEnabled) {
             setTimeout(() => {
@@ -79,7 +82,7 @@ export class MemoryMesh {
         } else {
             state[block] = content.substring(0, MAX_BLOCK_SIZE);
         }
-        globalEventStore.append({
+        this.eventStore.append({
             type: 'MEMORY_STORED',
             sourceAgentId: 'SYSTEM_MEMORY_MESH',
             threadId: contextId,
@@ -236,7 +239,7 @@ export class MemoryMesh {
                 const retention = Math.exp(-daysSinceLastAccess / memoryStrength);
 
                 if (retention < DECAY_THRESHOLD) {
-                    globalEventStore.append({
+                    this.eventStore.append({
                         type: 'MEMORY_STORED',
                         sourceAgentId: 'SYSTEM_MEMORY_MESH',
                         threadId: 'GLOBAL',
@@ -390,7 +393,7 @@ export class MemoryMesh {
             // Rebuild index to maintain alignment
             this.rebuildVectorIndex();
 
-            globalEventStore.append({
+            this.eventStore.append({
                 type: 'MEMORY_STORED',
                 sourceAgentId: 'SYSTEM_MEMORY_MESH',
                 threadId,

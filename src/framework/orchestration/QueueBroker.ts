@@ -1,5 +1,5 @@
-import { globalMessageBus } from '../core/MessageBus.ts';
-import { globalStateAdapter } from '../core/StateAdapter.ts';
+import { IMessageBus, globalMessageBus } from '../core/MessageBus.ts';
+import { StateAdapter, globalStateAdapter } from '../core/StateAdapter.ts';
 
 export interface TaskPayload {
     taskId: string;
@@ -37,6 +37,14 @@ export interface QueueTaskRecord {
     brokerId?: string;
 }
 
+export interface QueueBrokerOptions {
+    visibilityTimeoutMs?: number;
+    defaultMaxAttempts?: number;
+    stateAdapter?: StateAdapter;
+    messageBus?: IMessageBus;
+    namespace?: string;
+}
+
 interface TaskSubscriber {
     id: string;
     handler: (task: TaskPayload) => Promise<void> | void;
@@ -55,25 +63,39 @@ export class QueueBroker {
     private nextSubscriberIndex = 0;
     private dispatching = false;
     private redispatchRequested = false;
-    private readonly pendingKey = 'queue:pending';
-    private readonly knownTasksKey = 'queue:known_tasks';
-    private readonly dlqKey = 'queue:dead_letter';
+    private readonly pendingKey: string;
+    private readonly knownTasksKey: string;
+    private readonly dlqKey: string;
     private readonly visibilityTimeoutMs: number;
     private readonly defaultMaxAttempts: number;
+    private readonly stateAdapter: StateAdapter;
+    private readonly messageBus: IMessageBus;
+    private readonly namespace: string;
     private readonly brokerId = crypto.randomUUID();
     private readonly recoveryTimer: NodeJS.Timeout;
     private resultUnsubscribe?: () => void;
+    private disposed = false;
 
-    constructor(options: { visibilityTimeoutMs?: number; defaultMaxAttempts?: number } = {}) {
+    constructor(options: QueueBrokerOptions = {}) {
         this.visibilityTimeoutMs = options.visibilityTimeoutMs ?? Number(process.env.ORCHESTRA_QUEUE_VISIBILITY_TIMEOUT_MS || 30000);
         this.defaultMaxAttempts = options.defaultMaxAttempts ?? Number(process.env.ORCHESTRA_QUEUE_MAX_ATTEMPTS || 3);
+        this.stateAdapter = options.stateAdapter || globalStateAdapter;
+        this.messageBus = options.messageBus || globalMessageBus;
+        this.namespace = options.namespace || 'queue';
+        this.pendingKey = this.key('pending');
+        this.knownTasksKey = this.key('known_tasks');
+        this.dlqKey = this.key('dead_letter');
 
-        globalMessageBus.subscribe('TASK_RESULTS', (result: TaskResult) => {
+        this.messageBus.subscribe(this.topic('TASK_RESULTS'), (result: TaskResult) => {
             this.handleTaskResult(result).catch(err => {
                 console.error(`[QueueBroker] Failed to handle task result for ${result.taskId}:`, err);
             });
         }).then(unsubscribe => {
-            this.resultUnsubscribe = unsubscribe;
+            if (this.disposed) {
+                unsubscribe();
+            } else {
+                this.resultUnsubscribe = unsubscribe;
+            }
         });
 
         this.recoveryTimer = setInterval(() => {
@@ -122,9 +144,9 @@ export class QueueBroker {
 
         return new Promise((resolve) => {
             this.addCompletionCallback(task.taskId, resolve);
-            globalStateAdapter.set(this.recordKey(task.taskId), record)
+            this.stateAdapter.set(this.recordKey(task.taskId), record)
                 .then(() => this.addKnownTask(task.taskId))
-                .then(() => globalStateAdapter.mutate<string[]>(this.pendingKey, current => {
+                .then(() => this.stateAdapter.mutate<string[]>(this.pendingKey, current => {
                     const queue = current || [];
                     return queue.includes(task.taskId) ? queue : [...queue, task.taskId];
                 }))
@@ -141,7 +163,7 @@ export class QueueBroker {
     }
 
     public subscribe(agentId: string, handler: (task: TaskPayload) => Promise<void> | void) {
-        globalMessageBus.subscribe(`TASKS:${agentId}`, handler);
+        this.messageBus.subscribe(this.topic(`TASKS:${agentId}`), handler);
     }
 
     public subscribeToAllTasks(handler: (task: TaskPayload) => Promise<void> | void, subscriberId: string = crypto.randomUUID()) {
@@ -152,10 +174,12 @@ export class QueueBroker {
     }
 
     public async publishResult(result: TaskResult) {
-        await globalMessageBus.publish('TASK_RESULTS', result);
+        await this.handleTaskResult(result);
+        await this.messageBus.publish(this.topic('TASK_RESULTS'), result);
     }
 
     public dispose() {
+        this.disposed = true;
         clearInterval(this.recoveryTimer);
         this.resultUnsubscribe?.();
         this.completionCallbacks.clear();
@@ -173,19 +197,19 @@ export class QueueBroker {
     }
 
     public async getTaskRecord(taskId: string): Promise<QueueTaskRecord | null> {
-        return globalStateAdapter.get<QueueTaskRecord>(this.recordKey(taskId));
+        return this.stateAdapter.get<QueueTaskRecord>(this.recordKey(taskId));
     }
 
     public async getDeadLetterQueue(): Promise<string[]> {
-        return (await globalStateAdapter.get<string[]>(this.dlqKey)) || [];
+        return (await this.stateAdapter.get<string[]>(this.dlqKey)) || [];
     }
 
     public async resetForTests(): Promise<void> {
-        const knownTasks = (await globalStateAdapter.get<string[]>(this.knownTasksKey)) || [];
-        await Promise.all(knownTasks.map(taskId => globalStateAdapter.delete(this.recordKey(taskId))));
-        await globalStateAdapter.set(this.knownTasksKey, []);
-        await globalStateAdapter.set(this.pendingKey, []);
-        await globalStateAdapter.set(this.dlqKey, []);
+        const knownTasks = (await this.stateAdapter.get<string[]>(this.knownTasksKey)) || [];
+        await Promise.all(knownTasks.map(taskId => this.stateAdapter.delete(this.recordKey(taskId))));
+        await this.stateAdapter.set(this.knownTasksKey, []);
+        await this.stateAdapter.set(this.pendingKey, []);
+        await this.stateAdapter.set(this.dlqKey, []);
         this.completionCallbacks.clear();
         this.allTasksSubscribers = [];
         this.nextSubscriberIndex = 0;
@@ -234,7 +258,7 @@ export class QueueBroker {
                 leaseId: undefined,
                 updatedAt: Date.now()
             };
-            await globalStateAdapter.set(this.recordKey(result.taskId), nextRecord);
+            await this.stateAdapter.set(this.recordKey(result.taskId), nextRecord);
             this.resolveTask(result);
             void this.dispatchAvailableTasks();
             return;
@@ -255,10 +279,10 @@ export class QueueBroker {
             brokerId: this.brokerId
         };
 
-        await globalStateAdapter.set(this.recordKey(record.task.taskId), nextRecord);
+        await this.stateAdapter.set(this.recordKey(record.task.taskId), nextRecord);
 
         if (nextRecord.status === 'DEAD_LETTER') {
-            await globalStateAdapter.mutate<string[]>(this.dlqKey, current => {
+            await this.stateAdapter.mutate<string[]>(this.dlqKey, current => {
                 const dlq = current || [];
                 return dlq.includes(record.task.taskId) ? dlq : [...dlq, record.task.taskId];
             });
@@ -270,7 +294,7 @@ export class QueueBroker {
             return;
         }
 
-        await globalStateAdapter.mutate<string[]>(this.pendingKey, current => {
+        await this.stateAdapter.mutate<string[]>(this.pendingKey, current => {
             const queue = current || [];
             return queue.includes(record.task.taskId) ? queue : [...queue, record.task.taskId];
         });
@@ -278,14 +302,14 @@ export class QueueBroker {
     }
 
     private async recoverExpiredLeases() {
-        const pending = await globalStateAdapter.get<string[]>(this.pendingKey);
-        await globalStateAdapter.mutate<string[]>(this.pendingKey, current => current || []);
+        const pending = await this.stateAdapter.get<string[]>(this.pendingKey);
+        await this.stateAdapter.mutate<string[]>(this.pendingKey, current => current || []);
 
         const queue = pending || [];
         const now = Date.now();
         const taskIds = new Set(queue);
 
-        const knownTasks = (await globalStateAdapter.get<string[]>(this.knownTasksKey)) || [];
+        const knownTasks = (await this.stateAdapter.get<string[]>(this.knownTasksKey)) || [];
         for (const taskId of knownTasks) {
             const record = await this.getTaskRecord(taskId);
             if (!record) continue;
@@ -335,7 +359,7 @@ export class QueueBroker {
                     updatedAt: now,
                     brokerId: this.brokerId
                 };
-                await globalStateAdapter.set(this.recordKey(taskId), leased);
+                await this.stateAdapter.set(this.recordKey(taskId), leased);
 
                 subscriber.active = true;
                 setTimeout(() => {
@@ -374,7 +398,7 @@ export class QueueBroker {
 
     private async popPendingTaskId(): Promise<string | null> {
         let popped: string | null = null;
-        await globalStateAdapter.mutate<string[]>(this.pendingKey, current => {
+        await this.stateAdapter.mutate<string[]>(this.pendingKey, current => {
             const queue = [...(current || [])];
             popped = queue.shift() || null;
             return queue;
@@ -383,14 +407,14 @@ export class QueueBroker {
     }
 
     private async enqueuePendingTask(taskId: string): Promise<void> {
-        await globalStateAdapter.mutate<string[]>(this.pendingKey, current => {
+        await this.stateAdapter.mutate<string[]>(this.pendingKey, current => {
             const queue = current || [];
             return queue.includes(taskId) ? queue : [...queue, taskId];
         });
     }
 
     private async addKnownTask(taskId: string): Promise<void> {
-        await globalStateAdapter.mutate<string[]>(this.knownTasksKey, current => {
+        await this.stateAdapter.mutate<string[]>(this.knownTasksKey, current => {
             const tasks = current || [];
             return tasks.includes(taskId) ? tasks : [...tasks, taskId];
         });
@@ -415,7 +439,15 @@ export class QueueBroker {
     }
 
     private recordKey(taskId: string) {
-        return `queue:task:${taskId}`;
+        return this.key(`task:${taskId}`);
+    }
+
+    private key(suffix: string) {
+        return `${this.namespace}:${suffix}`;
+    }
+
+    private topic(topic: string) {
+        return `${this.namespace}:${topic}`;
     }
 }
 

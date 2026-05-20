@@ -1,7 +1,14 @@
 import { FrameworkEvent } from './types.ts';
-import { globalMessageBus } from './MessageBus.ts';
-import { globalStateAdapter } from './StateAdapter.ts';
+import { IMessageBus, globalMessageBus } from './MessageBus.ts';
+import { StateAdapter, globalStateAdapter } from './StateAdapter.ts';
 import { Sanitizer } from '../security/Sanitizer.ts';
+
+export interface EventStoreOptions {
+    stateAdapter?: StateAdapter;
+    messageBus?: IMessageBus;
+    historyKey?: string;
+    topic?: string;
+}
 
 /**
  * EventStore manages the append-only event log for the entire system.
@@ -12,11 +19,28 @@ export class EventStore {
     private eventIds: Set<string> = new Set();
     private threadIndex: Map<string, FrameworkEvent[]> = new Map();
     private listeners: ((event: FrameworkEvent) => void)[] = [];
+    private readonly stateAdapter: StateAdapter;
+    private readonly messageBus: IMessageBus;
+    private readonly historyKey: string;
+    private readonly topic: string;
+    private unsubscribeFromBus?: () => void;
+    private disposed = false;
 
-    constructor() {
-        // Subscribe to global event stream to keep local cache in sync across nodes
-        globalMessageBus.subscribe('FRAMEWORK_EVENTS', (event: FrameworkEvent) => {
+    constructor(options: EventStoreOptions = {}) {
+        this.stateAdapter = options.stateAdapter || globalStateAdapter;
+        this.messageBus = options.messageBus || globalMessageBus;
+        this.historyKey = options.historyKey || 'framework_events';
+        this.topic = options.topic || 'FRAMEWORK_EVENTS';
+
+        // Subscribe to the event stream to keep local cache in sync across nodes.
+        this.messageBus.subscribe(this.topic, (event: FrameworkEvent) => {
             this.internalAppend(event);
+        }).then(unsubscribe => {
+            if (this.disposed) {
+                unsubscribe();
+            } else {
+                this.unsubscribeFromBus = unsubscribe;
+            }
         });
         
         // Seed history from shared state
@@ -25,7 +49,7 @@ export class EventStore {
 
     private async loadHistory() {
         try {
-            const history = await globalStateAdapter.getRange('framework_events', 0, -1);
+            const history = await this.stateAdapter.getRange(this.historyKey, 0, -1);
             history.forEach(event => this.internalAppend(event));
         } catch (err) {
             console.error('Failed to load event history from StateAdapter:', err);
@@ -82,16 +106,22 @@ export class EventStore {
         };
         
         // 1. Persist to shared state
-        globalStateAdapter.pushToList('framework_events', fullEvent);
+        this.stateAdapter.pushToList(this.historyKey, fullEvent);
 
         // 2. Append locally immediately. The bus may throttle cross-node fanout,
         // but the origin node must not lose its own audit/event record.
         this.internalAppend(fullEvent);
 
         // 3. Publish to distributed bus - duplicate local delivery is ignored by ID
-        globalMessageBus.publish('FRAMEWORK_EVENTS', fullEvent);
+        this.messageBus.publish(this.topic, fullEvent);
         
         return fullEvent;
+    }
+
+    public dispose() {
+        this.disposed = true;
+        this.unsubscribeFromBus?.();
+        this.listeners = [];
     }
 
     public clear() {

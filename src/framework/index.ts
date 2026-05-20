@@ -9,7 +9,7 @@ export type { AgentCard, CoreMemoryState, EventType, FrameworkEvent, MemoryEntry
 export { Orchestrator } from './orchestration/Orchestrator.ts';
 export type { Paradigm, WorkflowConfig } from './orchestration/Orchestrator.ts';
 export { QueueBroker } from './orchestration/QueueBroker.ts';
-export type { QueueTaskRecord, QueueTaskStatus, TaskPayload, TaskResult } from './orchestration/QueueBroker.ts';
+export type { QueueBrokerOptions, QueueTaskRecord, QueueTaskStatus, TaskPayload, TaskResult } from './orchestration/QueueBroker.ts';
 export type { RuntimeContextOptions, RuntimeServices } from './core/RuntimeContext.ts';
 export { createRuntimeContext, globalRuntimeContext } from './core/RuntimeContext.ts';
 
@@ -18,7 +18,10 @@ export type { MemoryMeshOptions } from './memory/MemoryMesh.ts';
 export { MemoryStateAdapter, createStateAdapter, globalStateAdapter } from './core/StateAdapter.ts';
 export type { StateAdapter } from './core/StateAdapter.ts';
 export { KeyValueStateAdapter } from './core/KeyValueStateAdapter.ts';
+export { LocalMessageBus } from './core/MessageBus.ts';
+export type { IMessageBus } from './core/MessageBus.ts';
 export { EventStore, globalEventStore } from './core/EventStore.ts';
+export type { EventStoreOptions } from './core/EventStore.ts';
 
 export { globalToolRegistry, ToolRegistry } from './tools/ToolRegistry.ts';
 export { PluginRegistry, CacheHitException, HumanApprovalRequiredException, globalPluginRegistry } from './core/PluginRegistry.ts';
