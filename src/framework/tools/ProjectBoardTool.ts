@@ -16,13 +16,6 @@ globalToolRegistry.register(
         projectId: z.string().optional().describe('Filter by a specific project ID')
     }),
     async ({ projectId }) => {
-        globalEventStore.append({
-            type: 'TOOL_CALL_REQUESTED',
-            sourceAgentId: 'SYSTEM',
-            threadId: 'GLOBAL',
-            payload: { tool: 'getProjectBoard', projectId }
-        });
-
         const data = await readProjectBoard();
         if (projectId) {
             const project = data.projects.find((p: any) => p.id === projectId);
@@ -40,14 +33,9 @@ globalToolRegistry.register(
         taskId: z.string().describe('ID of the task to update'),
         newStatus: z.enum(['TODO', 'IN_PROGRESS', 'DONE', 'BLOCKED', 'REVIEW', 'todo', 'in-progress', 'done']).describe('The new status for the task')
     }),
-    async ({ projectId, taskId, newStatus }) => {
-        globalEventStore.append({
-            type: 'TOOL_CALL_REQUESTED',
-            sourceAgentId: 'SYSTEM',
-            threadId: 'GLOBAL',
-            payload: { tool: 'updateTaskStatus', projectId, taskId, newStatus }
-        });
-
+    async ({ projectId, taskId, newStatus }, context) => {
+        const eventStore = context.runtime?.eventStore || globalEventStore;
+        const stateAdapter = context.runtime?.stateAdapter;
         const normalizedStatus = newStatus.toUpperCase().replace('-', '_');
         let changedTask: any = null;
         let oldStatus = '';
@@ -63,12 +51,12 @@ globalToolRegistry.register(
             task.status = normalizedStatus;
             changedTask = task;
             return data;
-        });
+        }, { stateAdapter });
 
-        globalEventStore.append({
+        eventStore.append({
             type: 'TELEMETRY_EMIT',
             sourceAgentId: 'PROJECT_SERVICE',
-            threadId: 'GLOBAL',
+            threadId: context.threadId,
             payload: {
                 action: 'TASK_STATUS_CHANGED',
                 projectId,
@@ -93,14 +81,9 @@ globalToolRegistry.register(
         assignee: z.string().optional().describe('Name of the agent or human assigned'),
         priority: z.enum(['low', 'medium', 'high', 'critical']).optional()
     }),
-    async ({ projectId, title, description, assignee, priority = 'medium' }) => {
-        globalEventStore.append({
-            type: 'TOOL_CALL_REQUESTED',
-            sourceAgentId: 'SYSTEM',
-            threadId: 'GLOBAL',
-            payload: { tool: 'createProjectTask', projectId, title }
-        });
-
+    async ({ projectId, title, description, assignee, priority = 'medium' }, context) => {
+        const eventStore = context.runtime?.eventStore || globalEventStore;
+        const stateAdapter = context.runtime?.stateAdapter;
         let newTask: any = null;
         await mutateProjectBoard((data) => {
             const project = data.projects.find((p: any) => p.id === projectId);
@@ -118,12 +101,12 @@ globalToolRegistry.register(
 
             project.tasks.push(newTask);
             return data;
-        });
+        }, { stateAdapter });
 
-        globalEventStore.append({
+        eventStore.append({
             type: 'TELEMETRY_EMIT',
             sourceAgentId: 'PROJECT_SERVICE',
-            threadId: 'GLOBAL',
+            threadId: context.threadId,
             payload: {
                 action: 'TASK_CREATED',
                 projectId,

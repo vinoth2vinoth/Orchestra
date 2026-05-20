@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import crypto from 'crypto';
-import { globalStateAdapter } from '../core/StateAdapter.ts';
+import { StateAdapter, globalStateAdapter } from '../core/StateAdapter.ts';
 
 export interface ProjectBoard {
     projects: any[];
@@ -9,6 +9,11 @@ export interface ProjectBoard {
 
 export interface VersionedProjectBoard extends ProjectBoard {
     version: string;
+}
+
+export interface ProjectBoardStoreOptions {
+    stateAdapter?: StateAdapter;
+    lockKey?: string;
 }
 
 const workspaceRoot = path.resolve(process.cwd(), 'workspace');
@@ -42,9 +47,11 @@ function writeBoardPayload(payload: string): void {
     }
 }
 
-async function withProjectBoardLock<T>(operation: () => Promise<T>): Promise<T> {
+async function withProjectBoardLock<T>(operation: () => Promise<T>, options: ProjectBoardStoreOptions = {}): Promise<T> {
+    const stateAdapter = options.stateAdapter || globalStateAdapter;
+    const effectiveLockKey = options.lockKey || lockKey;
     const deadline = Date.now() + 5000;
-    while (!(await globalStateAdapter.acquireLock(lockKey, 5000))) {
+    while (!(await stateAdapter.acquireLock(effectiveLockKey, 5000))) {
         if (Date.now() > deadline) {
             throw new Error('Timed out acquiring project board lock.');
         }
@@ -54,7 +61,7 @@ async function withProjectBoardLock<T>(operation: () => Promise<T>): Promise<T> 
     try {
         return await operation();
     } finally {
-        await globalStateAdapter.releaseLock(lockKey);
+        await stateAdapter.releaseLock(effectiveLockKey);
     }
 }
 
@@ -71,7 +78,7 @@ export async function readProjectBoard(): Promise<VersionedProjectBoard> {
     };
 }
 
-export async function writeProjectBoard(board: ProjectBoard): Promise<VersionedProjectBoard> {
+export async function writeProjectBoard(board: ProjectBoard, options: ProjectBoardStoreOptions = {}): Promise<VersionedProjectBoard> {
     return withProjectBoardLock(async () => {
         const normalized = normalizeBoard(board);
         const payload = `${JSON.stringify(normalized, null, 2)}\n`;
@@ -80,10 +87,10 @@ export async function writeProjectBoard(board: ProjectBoard): Promise<VersionedP
             ...normalized,
             version: versionFor(payload)
         };
-    });
+    }, options);
 }
 
-export async function compareAndWriteProjectBoard(board: ProjectBoard, expectedVersion?: string): Promise<VersionedProjectBoard> {
+export async function compareAndWriteProjectBoard(board: ProjectBoard, expectedVersion?: string, options: ProjectBoardStoreOptions = {}): Promise<VersionedProjectBoard> {
     return withProjectBoardLock(async () => {
         const current = await readProjectBoard();
         if (expectedVersion && current.version !== expectedVersion) {
@@ -100,10 +107,10 @@ export async function compareAndWriteProjectBoard(board: ProjectBoard, expectedV
             ...normalized,
             version: versionFor(payload)
         };
-    });
+    }, options);
 }
 
-export async function mutateProjectBoard(mutator: (board: ProjectBoard) => ProjectBoard | Promise<ProjectBoard>): Promise<VersionedProjectBoard> {
+export async function mutateProjectBoard(mutator: (board: ProjectBoard) => ProjectBoard | Promise<ProjectBoard>, options: ProjectBoardStoreOptions = {}): Promise<VersionedProjectBoard> {
     return withProjectBoardLock(async () => {
         const current = await readProjectBoard();
         const next = await mutator({ projects: current.projects });
@@ -114,5 +121,5 @@ export async function mutateProjectBoard(mutator: (board: ProjectBoard) => Proje
             ...normalized,
             version: versionFor(payload)
         };
-    });
+    }, options);
 }

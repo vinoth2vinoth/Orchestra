@@ -1,8 +1,16 @@
+import fs from 'fs';
+import path from 'path';
+import { z } from 'zod';
 import { EventStore } from '../src/framework/core/EventStore.ts';
 import { LocalMessageBus } from '../src/framework/core/MessageBus.ts';
 import { MemoryStateAdapter } from '../src/framework/core/StateAdapter.ts';
+import { createRuntimeContext } from '../src/framework/core/RuntimeContext.ts';
+import { runWithContext } from '../src/framework/core/ExecutionContext.ts';
 import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
 import { QueueBroker, TaskPayload } from '../src/framework/orchestration/QueueBroker.ts';
+import { globalIAMInterceptor } from '../src/framework/security/IAMInterceptor.ts';
+import { ToolRegistry, globalToolRegistry } from '../src/framework/tools/ToolRegistry.ts';
+import '../src/framework/tools/ProjectBoardTool.ts';
 
 function assert(condition: unknown, message: string) {
   if (!condition) throw new Error(message);
@@ -165,10 +173,123 @@ async function testMemoryMeshUsesScopedEventStore() {
   }
 }
 
+async function testToolRegistryLogsToScopedEventStore() {
+  const eventStoreA = new EventStore({
+    stateAdapter: new MemoryStateAdapter(),
+    messageBus: new LocalMessageBus(),
+    historyKey: 'tenant-a-tool-events',
+    topic: 'TENANT_A_TOOL_EVENTS'
+  });
+  const eventStoreB = new EventStore({
+    stateAdapter: new MemoryStateAdapter(),
+    messageBus: new LocalMessageBus(),
+    historyKey: 'tenant-b-tool-events',
+    topic: 'TENANT_B_TOOL_EVENTS'
+  });
+  const toolRegistry = new ToolRegistry();
+  toolRegistry.register(
+    'scopedEchoTool',
+    'Echo scoped tool input.',
+    z.object({ marker: z.string() }),
+    async ({ marker }) => `echo:${marker}`
+  );
+
+  const tenantA = `tool-scope-a-${Date.now()}`;
+  const tenantB = `tool-scope-b-${Date.now()}`;
+  globalIAMInterceptor.registerPolicy({ tenantId: tenantA, allowedTools: ['scopedEchoTool'], requiredSecrets: {} });
+  globalIAMInterceptor.registerPolicy({ tenantId: tenantB, allowedTools: ['scopedEchoTool'], requiredSecrets: {} });
+
+  try {
+    const tools = toolRegistry.getAllTools();
+    const runtimeA = createRuntimeContext({ tenantId: tenantA, eventStore: eventStoreA, toolRegistry });
+    const runtimeB = createRuntimeContext({ tenantId: tenantB, eventStore: eventStoreB, toolRegistry });
+    const threadId = `same-tool-thread-${Date.now()}`;
+
+    const [resultA, resultB] = await Promise.all([
+      runWithContext({
+        tenantId: tenantA,
+        agentId: 'tool-agent-a',
+        threadId,
+        capabilities: [],
+        runtime: runtimeA
+      }, () => tools.scopedEchoTool.execute({ marker: 'tenant-a-only' })),
+      runWithContext({
+        tenantId: tenantB,
+        agentId: 'tool-agent-b',
+        threadId,
+        capabilities: [],
+        runtime: runtimeB
+      }, () => tools.scopedEchoTool.execute({ marker: 'tenant-b-only' }))
+    ]);
+
+    assert(resultA === 'echo:tenant-a-only', `Tool A returned wrong result: ${JSON.stringify(resultA)}`);
+    assert(resultB === 'echo:tenant-b-only', `Tool B returned wrong result: ${JSON.stringify(resultB)}`);
+
+    const eventsA = eventStoreA.getEventsByThread(threadId);
+    const eventsB = eventStoreB.getEventsByThread(threadId);
+    assert(eventsA.length === 1 && eventsA[0].sourceAgentId === 'tool-agent-a', `Tool A logged outside scoped event store: ${JSON.stringify(eventsA)}`);
+    assert(eventsB.length === 1 && eventsB[0].sourceAgentId === 'tool-agent-b', `Tool B logged outside scoped event store: ${JSON.stringify(eventsB)}`);
+    assert(eventsA[0].payload.args.marker === 'tenant-a-only', `Tool A logged wrong args: ${JSON.stringify(eventsA)}`);
+    assert(eventsB[0].payload.args.marker === 'tenant-b-only', `Tool B logged wrong args: ${JSON.stringify(eventsB)}`);
+  } finally {
+    eventStoreA.dispose();
+    eventStoreB.dispose();
+  }
+}
+
+async function testProjectBoardToolUsesScopedRuntimeServices() {
+  const projectPath = path.join(process.cwd(), 'workspace', 'projects.json');
+  const hadOriginal = fs.existsSync(projectPath);
+  const original = hadOriginal ? fs.readFileSync(projectPath, 'utf8') : '';
+  const eventStore = new EventStore({
+    stateAdapter: new MemoryStateAdapter(),
+    messageBus: new LocalMessageBus(),
+    historyKey: 'project-tool-events',
+    topic: 'PROJECT_TOOL_EVENTS'
+  });
+  const stateAdapter = new MemoryStateAdapter();
+  const tenantId = `project-tool-tenant-${Date.now()}`;
+  const threadId = `project-tool-thread-${Date.now()}`;
+  globalIAMInterceptor.registerPolicy({ tenantId, allowedTools: ['createProjectTask'], requiredSecrets: {} });
+
+  try {
+    fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+    fs.writeFileSync(projectPath, JSON.stringify({
+      projects: [{ id: 'project-tool-scope', name: 'Scoped Project', description: '', createdAt: Date.now(), tasks: [] }]
+    }, null, 2), 'utf8');
+
+    const runtime = createRuntimeContext({ tenantId, eventStore, stateAdapter });
+    const result = await runWithContext({
+      tenantId,
+      agentId: 'project-tool-agent',
+      threadId,
+      capabilities: [],
+      runtime
+    }, () => globalToolRegistry.getAllTools().createProjectTask.execute({
+      projectId: 'project-tool-scope',
+      title: 'Scoped task'
+    }));
+
+    assert(String(result).includes('Scoped task'), `Project board tool returned wrong result: ${JSON.stringify(result)}`);
+    const events = eventStore.getEventsByThread(threadId);
+    assert(events.some(event => event.type === 'TOOL_CALL_REQUESTED' && event.sourceAgentId === 'project-tool-agent'), `Project board tool request did not use scoped event store: ${JSON.stringify(events)}`);
+    assert(events.some(event => event.type === 'TELEMETRY_EMIT' && event.payload.action === 'TASK_CREATED'), `Project board telemetry did not use scoped event store: ${JSON.stringify(events)}`);
+  } finally {
+    eventStore.dispose();
+    if (hadOriginal) {
+      fs.writeFileSync(projectPath, original, 'utf8');
+    } else if (fs.existsSync(projectPath)) {
+      fs.unlinkSync(projectPath);
+    }
+  }
+}
+
 const tests = [
   ['queue brokers use scoped state and message bus', testQueueBrokersUseScopedStateAndMessageBus],
   ['event stores use scoped state and message bus', testEventStoresUseScopedStateAndMessageBus],
-  ['memory mesh uses scoped event store', testMemoryMeshUsesScopedEventStore]
+  ['memory mesh uses scoped event store', testMemoryMeshUsesScopedEventStore],
+  ['tool registry logs to scoped event store', testToolRegistryLogsToScopedEventStore],
+  ['project board tool uses scoped runtime services', testProjectBoardToolUsesScopedRuntimeServices]
 ] as const;
 
 const results = [];

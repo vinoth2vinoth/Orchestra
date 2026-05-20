@@ -3,7 +3,35 @@ import { tool } from 'ai';
 import { globalPluginRegistry } from '../core/PluginRegistry.ts';
 import { globalEscalationManager } from '../governance/EscalationManager.ts';
 import { getExecutionContext } from '../core/ExecutionContext.ts';
+import type { ExecutionContext } from '../core/ExecutionContext.ts';
+import { globalEventStore } from '../core/EventStore.ts';
 import { globalIAMInterceptor } from '../security/IAMInterceptor.ts';
+
+const summarizeToolArgs = (value: any): any => {
+    if (typeof value === 'string') {
+        return value.length > 500 ? `${value.slice(0, 500)}... [${value.length} chars]` : value;
+    }
+    if (Array.isArray(value)) {
+        return value.map(item => summarizeToolArgs(item));
+    }
+    if (value && typeof value === 'object') {
+        const summarized: Record<string, any> = {};
+        for (const [key, item] of Object.entries(value)) {
+            const lowerKey = key.toLowerCase();
+            if (lowerKey === '_secrets' || lowerKey.includes('secret') || lowerKey.includes('token') || lowerKey.includes('password')) {
+                summarized[key] = '[REDACTED]';
+                continue;
+            }
+            if (['content', 'body', 'code'].includes(lowerKey) && typeof item === 'string') {
+                summarized[key] = `[${item.length} chars]`;
+                continue;
+            }
+            summarized[key] = summarizeToolArgs(item);
+        }
+        return summarized;
+    }
+    return value;
+};
 
 // Simplistic representation of Model Context Protocol / Tool Registry
 export class ToolRegistry {
@@ -13,7 +41,7 @@ export class ToolRegistry {
         name: string, 
         description: string, 
         inputSchema: any, 
-        execute: (args: any) => Promise<any>, 
+        execute: (args: any, context: ExecutionContext) => Promise<any>,
         options: { highRisk?: boolean; capabilities?: string[] } = {}
     ) {
         const toolObj = tool({
@@ -36,6 +64,7 @@ export class ToolRegistry {
                 const { agentId, threadId, tenantId, capabilities } = context;
                 const pluginRegistry = context.runtime?.pluginRegistry || globalPluginRegistry;
                 const escalationManager = context.runtime?.escalationManager || globalEscalationManager;
+                const eventStore = context.runtime?.eventStore || globalEventStore;
 
                 // Step 1: Execute High Risk Check
                 if (options.highRisk) {
@@ -60,11 +89,17 @@ export class ToolRegistry {
 
                 // Step 3: Emit Hooks
                 const modifier = await pluginRegistry.emitBeforeToolInvoke(agentId, name, securedArgs, threadId);
+                eventStore.append({
+                    type: 'TOOL_CALL_REQUESTED',
+                    sourceAgentId: agentId,
+                    threadId,
+                    payload: { tool: modifier.toolName, args: summarizeToolArgs(modifier.args) }
+                });
                 await pluginRegistry.emitOnToolCalled(agentId, modifier.toolName, modifier.args, threadId);
                 
                 // Step 4: Execute using secured arguments
                 try {
-                    const result = await execute(modifier.args);
+                    const result = await execute(modifier.args, context);
                     await pluginRegistry.emitAfterToolInvoke(agentId, modifier.toolName, modifier.args, result, threadId);
                     return result;
                 } catch (error) {

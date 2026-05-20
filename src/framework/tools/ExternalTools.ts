@@ -4,7 +4,6 @@ import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { globalToolRegistry } from './ToolRegistry.ts';
-import { globalEventStore } from '../core/EventStore.ts';
 
 const workspaceRoot = path.resolve(process.cwd(), 'workspace');
 const execAsync = promisify(exec);
@@ -76,12 +75,6 @@ globalToolRegistry.register(
     }),
     async ({ query, numResults = 3 }) => {
         const mode = ensureToolEnabled('webSearch');
-        globalEventStore.append({
-            type: 'TOOL_CALL_REQUESTED',
-            sourceAgentId: 'SYSTEM',
-            threadId: 'GLOBAL',
-            payload: { tool: 'webSearch', query }
-        });
         if (mode === 'live') {
             throw new Error('webSearch live mode requires a configured search provider. Set this tool to mock mode or add a search provider integration.');
         }
@@ -102,12 +95,6 @@ globalToolRegistry.register(
     }),
     async ({ url }) => {
         const mode = ensureToolEnabled('fetchUrl');
-        globalEventStore.append({
-            type: 'TOOL_CALL_REQUESTED',
-            sourceAgentId: 'SYSTEM',
-            threadId: 'GLOBAL',
-            payload: { tool: 'fetchUrl', url }
-        });
         if (mode === 'live') {
             const result = await fetchTextWithTimeout(url);
             return `[HTTP ${result.status} ${result.statusText}]\n${result.text}`;
@@ -128,13 +115,6 @@ globalToolRegistry.register(
         code: z.string().describe('The code to execute')
     }),
     async ({ language, code }) => {
-        globalEventStore.append({
-            type: 'TOOL_CALL_REQUESTED',
-            sourceAgentId: 'SYSTEM',
-            threadId: 'GLOBAL',
-            payload: { tool: 'executeCodeSandbox', language }
-        });
-
         if (process.env.ORCHESTRA_ENABLE_CODE_SANDBOX !== 'true') {
             throw new Error('Code sandbox execution is disabled by default. Set ORCHESTRA_ENABLE_CODE_SANDBOX=true only in an isolated environment.');
         }
@@ -182,8 +162,6 @@ globalToolRegistry.register(
         filePath: z.string().describe('Relative path to the file within the workspace')
     }),
     async ({ filePath }) => {
-        globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'fileSystemRead', filePath } });
-        
         const absolutePath = safeResolveWorkspacePath(filePath);
         if (!absolutePath) {
             return `[File System Error]: Access denied to ${filePath}. Path must be within workspace.`;
@@ -207,8 +185,6 @@ globalToolRegistry.register(
         content: z.string().describe('Content to write into the file')
     }),
     async ({ filePath, content }) => {
-        globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'fileSystemWrite', filePath, length: content.length } });
-        
         const absolutePath = safeResolveWorkspacePath(filePath);
         if (!absolutePath) {
             return `[File System Error]: Access denied to ${filePath}. Path must be within workspace.`;
@@ -234,8 +210,6 @@ globalToolRegistry.register(
     }),
     async ({ command }) => {
         const mode = ensureToolEnabled('executeShellCommand');
-        globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'executeShellCommand', command } });
-        
         const blacklist = ['rm ', 'mv ', 'chmod', 'chown', 'kill', 'pkill', 'format', ':(){ :|:& };:'];
         if (blacklist.some(forbidden => command.includes(forbidden))) {
             throw new Error(`Sandbox Security Violation: Command "${command}" contains potentially destructive operations.`);
@@ -265,8 +239,6 @@ globalToolRegistry.register(
     }),
     async ({ method, url, headers, body }) => {
         const mode = ensureToolEnabled('httpRequest');
-        globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'httpRequest', method, url } });
-        
         assertExternalUrlAllowed(url);
 
         if (mode === 'live') {
@@ -287,8 +259,6 @@ globalToolRegistry.register(
     }),
     async ({ query }) => {
         const mode = ensureToolEnabled('databaseQuery');
-        globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'databaseQuery', query } });
-        
         if (query.toLowerCase().includes('drop table') || query.toLowerCase().includes('truncate')) {
              throw new Error('Sandbox Security Violation: Destructive database operations are prohibited via this agentic interface.');
         }
@@ -311,8 +281,6 @@ globalToolRegistry.register(
     }),
     async ({ contextQuery, namespace }) => {
         const mode = ensureToolEnabled('ragSearch');
-        globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'ragSearch', contextQuery } });
-        
         if (mode === 'live') {
             throw new Error('ragSearch live mode requires a vector database or MemoryMesh-backed retrieval adapter.');
         }
