@@ -1,15 +1,16 @@
 import { BaseAgent } from '../../agents/BaseAgent.ts';
+import type { WorkflowConfig } from '../Orchestrator.ts';
 import { ParadigmStrategy, ParadigmContext } from './ParadigmStrategy.ts';
 
 /**
  * Decentralized Swarm Paradigm: Agents autonomously collaborate via the blackboard.
  */
 export class DecentralizedSwarmStrategy extends ParadigmStrategy {
-    async run(task: any, agents: BaseAgent[], context: ParadigmContext) {
+    async run(task: any, agents: BaseAgent[], context: ParadigmContext, config?: WorkflowConfig) {
         const blackboard = context.blackboard;
         let currentStatus = 'Active';
         let iterations = 0;
-        const maxIterations = 5; // Default from Orchestrator
+        const maxIterations = config?.maxIterations ?? 5;
         
         const checkpoint = await context.checkpointer.getLatestCheckpoint(context.threadId);
         if (checkpoint && checkpoint.stepId && checkpoint.stepId.startsWith('swarm_step_')) {

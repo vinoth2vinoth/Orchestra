@@ -13,3 +13,4 @@ server-test.*.log
 .orchestra-private/
 orchestra_workspace/.orchestra/checkpoints/
 orchestra_workspace/.orchestra/audit/*.jsonl
+*.enc

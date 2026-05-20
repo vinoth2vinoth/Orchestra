@@ -14,6 +14,10 @@ export class CircuitBreaker {
     private readonly PREDICTIVE_ERROR_VELOCITY_WINDOW = 60000; // 1 minute
     private errorTimestampHistory: number[] = [];
 
+    /**
+     * @param maxFailures Number of consecutive failures before opening the circuit.
+     * @param retryDelayMs Fixed cooldown before the next HALF_OPEN recovery attempt.
+     */
     constructor(maxFailures = 3, retryDelayMs = 2000, private eventStore: EventStore = globalEventStore) {
         this.maxFailures = maxFailures;
         this.retryDelayMs = retryDelayMs;
@@ -112,7 +116,7 @@ export class CircuitBreaker {
             
             if (this.failures >= this.maxFailures) {
                 this.state = 'OPEN';
-                this.nextAttemptTime = Date.now() + this.retryDelayMs * (this.failures); // Exponential backoff scaling
+                this.nextAttemptTime = Date.now() + this.retryDelayMs;
                 this.eventStore.append({ type: 'ERROR_THROWN', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { message: 'Circuit tripped to OPEN' } });
                 
                 if (fallback) {

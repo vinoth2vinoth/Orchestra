@@ -1,9 +1,9 @@
-import { Orchestrator } from './src/framework/orchestration/Orchestrator.ts';
-import { WorkerAgent } from './src/framework/agents/WorkerAgent.ts';
-import { PlannerAgent } from './src/framework/agents/PlannerAgent.ts';
-import { ManagerAgent } from './src/framework/agents/ManagerAgent.ts';
-import { MemoryMesh } from './src/framework/memory/MemoryMesh.ts';
-import { globalRegistry } from './src/framework/agents/AgentRegistry.ts';
+import { Orchestrator } from '../../src/framework/orchestration/Orchestrator.ts';
+import { WorkerAgent } from '../../src/framework/agents/WorkerAgent.ts';
+import { PlannerAgent } from '../../src/framework/agents/PlannerAgent.ts';
+import { ManagerAgent } from '../../src/framework/agents/ManagerAgent.ts';
+import { MemoryMesh } from '../../src/framework/memory/MemoryMesh.ts';
+import { globalRegistry } from '../../src/framework/agents/AgentRegistry.ts';
 import fs from 'fs';
 
 const mem = new MemoryMesh();

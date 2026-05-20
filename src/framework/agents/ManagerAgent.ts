@@ -93,6 +93,7 @@ Respond with 'GRANT' if approved, or 'DENY' with reasons.`;
                         this.memory,
                         this.llmConfig,
                         this.card.id,
+                        undefined,
                         this.runtime
                     );
                     this.subordinates.push(tempAgent);

@@ -11,9 +11,15 @@ export class AgentSpawner {
         memory: MemoryMesh,
         llmConfig: LLMConfig,
         parentId: string,
+        capabilitiesOrRuntime?: string[] | RuntimeContextOptions,
         runtime?: RuntimeContextOptions
     ): BaseAgent {
         const description = `You are a specialist dynamically spawned to handle a sub-task. Your expertise is in: ${expertise}`;
+        const capabilities = Array.isArray(capabilitiesOrRuntime) ? capabilitiesOrRuntime : undefined;
+        const effectiveRuntime = Array.isArray(capabilitiesOrRuntime) ? runtime : capabilitiesOrRuntime;
+        const resolvedCapabilities = capabilities ?? [
+            expertise.toLowerCase().includes('search') ? 'web_search' : 'general'
+        ];
         
         const newAgent = new WorkerAgent(
             name,
@@ -21,12 +27,12 @@ export class AgentSpawner {
             'WORKER',
             memory,
             llmConfig,
-            [expertise.toLowerCase().includes('search') ? 'web_search' : 'code_interpreter'],
+            resolvedCapabilities,
             parentId,
             undefined,
             undefined,
             undefined,
-            runtime
+            effectiveRuntime
         );
 
         return newAgent;
@@ -34,6 +40,7 @@ export class AgentSpawner {
 
     public static terminate(agentId: string, runtime?: RuntimeContextOptions) {
         const services = createRuntimeContext(runtime);
+        services.agentRegistry.unregister(agentId);
         services.eventStore.append({
             type: 'AGENT_TERMINATED',
             sourceAgentId: 'ORCHESTRATOR',

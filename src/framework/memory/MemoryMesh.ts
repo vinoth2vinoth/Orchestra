@@ -35,6 +35,8 @@ export class MemoryMesh {
     private readonly persistEnabled: boolean;
     private readonly stateAdapter: StateAdapter;
     private readonly eventStore: EventStore;
+    private gcWriteCounter = 0;
+    private readonly gcInterval = Number(process.env.ORCHESTRA_MEMORY_GC_INTERVAL || 50);
     
     // GraphRAG Structures
     private graphEdges: Array<{ source: string, target: string, relation: string, weight: number, tenantId?: string }> = [];
@@ -95,19 +97,19 @@ export class MemoryMesh {
         const effectiveTenantId = this.effectiveTenantId(tenantId);
         await this.store('WORKING', content, { threadId, agentId }, false, effectiveTenantId);
         this.checkConsolidation(threadId, effectiveTenantId);
-        this.garbageCollect();
+        this.maybeGarbageCollect();
     }
 
     // 2. Episodic Memory (Historical runs, event sequences)
     public async addEpisodicMemory(agentId: string, eventSequence: any, tenantId?: string) {
         await this.store('EPISODIC', eventSequence, { agentId }, false, this.effectiveTenantId(tenantId));
-        this.garbageCollect();
+        this.maybeGarbageCollect();
     }
 
     // 3. Semantic Memory (Factual knowledge, Vector/Graph capabilities in prod)
     public async addSemanticMemory(fact: string, entities: string[], tenantId?: string) {
         await this.store('SEMANTIC', fact, { entities }, true, this.effectiveTenantId(tenantId));
-        this.garbageCollect();
+        this.maybeGarbageCollect();
     }
 
     // 4. Procedural Memory (Instructions, learned rules, SOPs)
@@ -126,6 +128,14 @@ export class MemoryMesh {
         }
 
         await this.store('PROCEDURAL', rule, { skill, importance }, true, effectiveTenantId);
+        this.maybeGarbageCollect();
+    }
+
+    private maybeGarbageCollect() {
+        this.gcWriteCounter++;
+        if (this.gcWriteCounter < this.gcInterval) return;
+
+        this.gcWriteCounter = 0;
         this.garbageCollect();
     }
 

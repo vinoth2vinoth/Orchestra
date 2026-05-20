@@ -36,7 +36,7 @@
     "lint": "tsc --noEmit",
     "test:core": "tsx src/framework/testing/run_tests.ts",
     "test:security": "tsx workspace/security_correctness_regression_tests.ts && tsx workspace/tool_mode_regression_tests.ts && tsx workspace/document_management_regression_tests.ts",
-    "test:architecture": "tsx workspace/architecture_queue_regression_tests.ts && tsx workspace/runtime_context_regression_tests.ts && tsx workspace/infrastructure_isolation_regression_tests.ts && tsx workspace/memory_persistence_regression_tests.ts && tsx workspace/audit_log_regression_tests.ts && tsx workspace/plugin_governance_regression_tests.ts && tsx workspace/claude_audit_regression_tests.ts",
+    "test:architecture": "tsx workspace/architecture_queue_regression_tests.ts && tsx workspace/runtime_context_regression_tests.ts && tsx workspace/infrastructure_isolation_regression_tests.ts && tsx workspace/memory_persistence_regression_tests.ts && tsx workspace/audit_log_regression_tests.ts && tsx workspace/plugin_governance_regression_tests.ts && tsx workspace/claude_audit_regression_tests.ts && tsx workspace/deep_audit_v3_regression_tests.ts",
     "test:reliability": "tsx workspace/reliability_gauntlet_tests.ts",
     "test:durability": "tsx workspace/durability_restart_tests.ts",
     "test:state-backend": "tsx workspace/state_backend_durability_tests.ts",
@@ -47,7 +47,8 @@
     "demo": "npm run example:code-review",
     "example:code-review": "tsx examples/reference-code-review/run.ts",
     "examples:check": "tsc -p tsconfig.examples.json --noEmit",
-    "check": "npm run lint && npm run test && npm run examples:check && npm run build"
+    "check:no-runtime-artifacts": "node -e \"const {execSync}=require('node:child_process'); const files=execSync('git ls-files', {encoding:'utf8'}).split(/\\r?\\n/).filter(Boolean).filter(f => f.startsWith('orchestra_workspace/.orchestra/') || f.endsWith('.enc')); if (files.length) { console.error('Runtime artifacts tracked by git:\\n' + files.join('\\n')); process.exit(1); }\"",
+    "check": "npm run lint && npm run check:no-runtime-artifacts && npm run test && npm run examples:check && npm run build"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",

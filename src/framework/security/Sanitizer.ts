@@ -80,10 +80,14 @@ export class Sanitizer {
         // Common injection triggers
         const patterns = [
             { id: 'SYS_OVERRIDE', regex: /ignore (all )?previous (instructions|directives)/i },
-            { id: 'ROLE_SPOOF', regex: /you are now (a|the|my) (admin|root|superuser)/i },
+            { id: 'ROLE_SPOOF', regex: /you are now (a|an|the|my)?\s*(admin|root|superuser|dan|unrestricted|jailbroken|free)/i },
+            { id: 'DEV_MODE', regex: /(developer|jailbreak|unrestricted|no.{0,10}restriction|without.{0,15}limitation)s? mode/i },
+            { id: 'SYS_PREFIX', regex: /^(system|admin|root)\s*[:>]/im },
+            { id: 'PRETEND_PERSONA', regex: /pretend (you are|to be|you're|you have no)/i },
             { id: 'OUTPUT_HIJACK', regex: /output exactly the following/i },
-            { id: 'ESCAPE_GUARD', regex: /end of untrusted content/i },
-            { id: 'REASONING_LEAK', regex: /show your (internal )?reasoning/i }
+            { id: 'ESCAPE_GUARD', regex: /end of (untrusted|system|instructions)/i },
+            { id: 'REASONING_LEAK', regex: /show your (internal )?reasoning/i },
+            { id: 'PROMPT_LEAK', regex: /repeat (your|the) (system |initial |original )?(prompt|instructions)/i }
         ];
 
         for (const pattern of patterns) {

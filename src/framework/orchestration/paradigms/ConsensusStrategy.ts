@@ -20,7 +20,13 @@ export class ConsensusStrategy extends ParadigmStrategy {
 
         let consensusResult: string | null = null;
         try {
-            consensusResult = await this.wbft.reachConsensus(task, validVoters, context.threadId);
+            consensusResult = await this.wbft.reachConsensus(
+                task,
+                validVoters,
+                context.threadId,
+                context.executeAgentTask,
+                context.blackboard
+            );
         } catch (err: any) {
             console.warn(`[ConsensusStrategy] WBFT Consensus failed: ${err.message}`);
         }

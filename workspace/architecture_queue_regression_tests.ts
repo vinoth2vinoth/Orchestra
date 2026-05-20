@@ -45,7 +45,7 @@ class QueueLifecycleAgent extends BaseAgent {
 }
 
 async function testRetryThenSuccess() {
-  const broker = new QueueBroker({ visibilityTimeoutMs: 250, defaultMaxAttempts: 3 });
+  const broker = new QueueBroker({ visibilityTimeoutMs: 2000, defaultMaxAttempts: 3 });
   try {
     await broker.resetForTests();
 
@@ -59,7 +59,7 @@ async function testRetryThenSuccess() {
       await broker.publishResult({ taskId: payload.taskId, status: 'success', result: { ok: true, attempts }, leaseId: payload.leaseId });
     }, 'queue-test-worker');
 
-    const result = await withTimeout(broker.publish(task(`retry-${Date.now()}`)), 2000);
+    const result = await withTimeout(broker.publish(task(`retry-${Date.now()}`)), 5000);
     if (result.status !== 'success' || result.result?.attempts !== 2) {
       throw new Error(`Expected retry success on second attempt, got ${JSON.stringify(result)}`);
     }

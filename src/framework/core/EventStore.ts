@@ -25,6 +25,7 @@ export class EventStore {
     private readonly topic: string;
     private unsubscribeFromBus?: () => void;
     private disposed = false;
+    public readonly ready: Promise<void>;
 
     constructor(options: EventStoreOptions = {}) {
         this.stateAdapter = options.stateAdapter || globalStateAdapter;
@@ -43,8 +44,15 @@ export class EventStore {
             }
         });
         
-        // Seed history from shared state
-        this.loadHistory();
+        // Seed history from shared state. Callers that need restored history before
+        // reads can await `ready` or use EventStore.create().
+        this.ready = this.loadHistory();
+    }
+
+    public static async create(options: EventStoreOptions = {}): Promise<EventStore> {
+        const store = new EventStore(options);
+        await store.ready;
+        return store;
     }
 
     private async loadHistory() {
@@ -105,8 +113,20 @@ export class EventStore {
             timestamp: Date.now()
         };
         
-        // 1. Persist to shared state
-        this.stateAdapter.pushToList(this.historyKey, fullEvent);
+        // 1. Persist to shared state. append() remains sync for callers, but
+        // persistence failures must be visible instead of disappearing silently.
+        this.stateAdapter.pushToList(this.historyKey, fullEvent).catch(err => {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(`[EventStore] DURABILITY WARNING: Failed to persist event ${fullEvent.id} to StateAdapter: ${message}`);
+            this.internalAppend({
+                type: 'ERROR_THROWN',
+                sourceAgentId: 'EVENT_STORE',
+                threadId: 'SYSTEM',
+                payload: { action: 'PERSISTENCE_FAILURE', eventId: fullEvent.id, message },
+                id: crypto.randomUUID(),
+                timestamp: Date.now()
+            });
+        });
 
         // 2. Append locally immediately. The bus may throttle cross-node fanout,
         // but the origin node must not lose its own audit/event record.

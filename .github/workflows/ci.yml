@@ -44,6 +44,9 @@ jobs:
       - name: Typecheck
         run: npm run lint
 
+      - name: Check no runtime artifacts are committed
+        run: npm run check:no-runtime-artifacts
+
       - name: Run tests
         run: npm run test
 

@@ -131,6 +131,10 @@ export class AuditLog {
         return { valid: errors.length === 0, entries, errors };
     }
 
+    public async verifyChain(date: Date = new Date()): Promise<{ valid: boolean; entries: number; errors: string[] }> {
+        return this.verify(date);
+    }
+
     private async withAuditLock<T>(operation: () => Promise<T>): Promise<T> {
         const lockKey = `audit:${this.getLogPath()}`;
         const deadline = Date.now() + 5000;
