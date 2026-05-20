@@ -3,7 +3,7 @@ import { WorkerNode } from '../src/framework/orchestration/WorkerNode.ts';
 import { WorkerCluster } from '../src/framework/orchestration/WorkerCluster.ts';
 import { globalQueueBroker } from '../src/framework/orchestration/QueueBroker.ts';
 import { BaseAgent } from '../src/framework/agents/BaseAgent.ts';
-import { globalRegistry } from '../src/framework/agents/AgentRegistry.ts';
+import { AgentRegistry, globalRegistry } from '../src/framework/agents/AgentRegistry.ts';
 import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
 import type { LLMConfig } from '../src/framework/llm/ProviderRegistry.ts';
 
@@ -197,13 +197,83 @@ async function testWorkerClusterStopsAllWorkers() {
   cluster.stop();
 }
 
+async function testWorkerNodeUsesScopedQueueAndRegistry() {
+  const scopedQueue = new QueueBroker({ visibilityTimeoutMs: 100, defaultMaxAttempts: 2 });
+  const scopedRegistry = new AgentRegistry();
+  const agentId = `scoped-worker-agent-${Date.now()}`;
+  const agent = new QueueLifecycleAgent(agentId);
+  const worker = new WorkerNode(`scoped-worker-node-${Date.now()}`, {
+    queueBroker: scopedQueue,
+    agentRegistry: scopedRegistry
+  });
+
+  try {
+    await scopedQueue.resetForTests();
+    await globalQueueBroker.resetForTests();
+    scopedRegistry.register(agent);
+
+    worker.start();
+    const result = await withTimeout(scopedQueue.publish({
+      ...task(`scoped-worker-${Date.now()}`),
+      agentId,
+      payload: { id: 'scoped-worker' }
+    }), 3000);
+
+    assert(result.status === 'success', `Expected scoped worker success, got ${JSON.stringify(result)}`);
+    assert(result.result?.processed === 'scoped-worker', `Expected scoped queue result, got ${JSON.stringify(result)}`);
+    assert(agent.calls === 1, `Expected scoped agent to run once, got ${agent.calls}`);
+    assert(globalRegistry.get(agentId) === undefined, 'Scoped worker test should not register agent globally');
+  } finally {
+    worker.stop();
+    scopedRegistry.unregister(agentId);
+    await scopedQueue.resetForTests();
+    await globalQueueBroker.resetForTests();
+    scopedQueue.dispose();
+  }
+}
+
+async function testWorkerClusterPassesScopedServicesToWorkers() {
+  const scopedQueue = new QueueBroker({ visibilityTimeoutMs: 100, defaultMaxAttempts: 2 });
+  const scopedRegistry = new AgentRegistry();
+  const agentId = `scoped-cluster-agent-${Date.now()}`;
+  const agent = new QueueLifecycleAgent(agentId);
+  const cluster = new WorkerCluster({
+    queueBroker: scopedQueue,
+    agentRegistry: scopedRegistry
+  });
+
+  try {
+    await scopedQueue.resetForTests();
+    scopedRegistry.register(agent);
+
+    cluster.init(1);
+    const result = await withTimeout(scopedQueue.publish({
+      ...task(`scoped-cluster-${Date.now()}`),
+      agentId,
+      payload: { id: 'scoped-cluster' }
+    }), 3000);
+
+    assert(result.status === 'success', `Expected scoped cluster success, got ${JSON.stringify(result)}`);
+    assert(result.result?.processed === 'scoped-cluster', `Expected scoped cluster result, got ${JSON.stringify(result)}`);
+    assert(agent.calls === 1, `Expected scoped cluster agent to run once, got ${agent.calls}`);
+    assert(globalRegistry.get(agentId) === undefined, 'Scoped cluster test should not register agent globally');
+  } finally {
+    cluster.stop();
+    scopedRegistry.unregister(agentId);
+    await scopedQueue.resetForTests();
+    scopedQueue.dispose();
+  }
+}
+
 const tests = [
   ['queue retry then success', testRetryThenSuccess],
   ['queue dead letter after max attempts', testDeadLetterAfterMaxAttempts],
   ['queue expired lease recovery', testExpiredLeaseRecovery],
   ['queue subscriber unregisters', testQueueSubscriberUnregisters],
   ['worker node can restart with same id', testWorkerNodeCanRestartWithSameId],
-  ['worker cluster stops all workers', testWorkerClusterStopsAllWorkers]
+  ['worker cluster stops all workers', testWorkerClusterStopsAllWorkers],
+  ['worker node uses scoped queue and registry', testWorkerNodeUsesScopedQueueAndRegistry],
+  ['worker cluster passes scoped services to workers', testWorkerClusterPassesScopedServicesToWorkers]
 ] as const;
 
 const results = [];

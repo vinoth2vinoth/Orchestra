@@ -1,5 +1,6 @@
 import { WorkerNode } from './WorkerNode.ts';
 import { globalMessageBus } from '../core/MessageBus.ts';
+import { RuntimeContextOptions, RuntimeServices, createRuntimeContext } from '../core/RuntimeContext.ts';
 
 export class WorkerCluster {
     private workers: WorkerNode[] = [];
@@ -8,6 +9,11 @@ export class WorkerCluster {
     private isInitialized: boolean = false;
     private monitorTimer: NodeJS.Timeout | null = null;
     private unsubscribeHeartbeats: (() => void) | null = null;
+    private runtime: RuntimeServices;
+
+    constructor(runtime: RuntimeContextOptions = {}) {
+        this.runtime = createRuntimeContext(runtime);
+    }
     
     public init(count: number = 3) {
         if (this.isInitialized) return;
@@ -36,7 +42,7 @@ export class WorkerCluster {
     }
     
     private spawnWorker(nodeId: string) {
-        const worker = new WorkerNode(nodeId);
+        const worker = new WorkerNode(nodeId, this.runtime);
         worker.start();
         this.workers.push(worker);
         this.nodeLastHeartbeat.set(nodeId, Date.now());
@@ -65,7 +71,7 @@ export class WorkerCluster {
                 worker.stop(); // Safe guard
                 
                 // Replace in array
-                const newWorker = new WorkerNode(nodeId);
+                const newWorker = new WorkerNode(nodeId, this.runtime);
                 newWorker.start();
                 this.workers[i] = newWorker;
                 this.nodeLastHeartbeat.set(nodeId, now); // reset

@@ -5,6 +5,8 @@ import { QueueBroker, globalQueueBroker } from '../orchestration/QueueBroker.ts'
 import { PolicyEngine, globalPolicyEngine } from '../governance/PolicyEngine.ts';
 import { AuditLog, globalAuditLog } from '../governance/AuditLog.ts';
 import { StateAdapter, globalStateAdapter } from './StateAdapter.ts';
+import { AgentRegistry, globalRegistry } from '../agents/AgentRegistry.ts';
+import { EventStore, globalEventStore } from './EventStore.ts';
 
 export interface RuntimeServices {
     tenantId: string;
@@ -15,6 +17,8 @@ export interface RuntimeServices {
     workerPool: WorkerPool;
     policyEngine: PolicyEngine;
     auditLog: AuditLog;
+    agentRegistry: AgentRegistry;
+    eventStore: EventStore;
 }
 
 export type RuntimeContextOptions = Partial<RuntimeServices> & {
@@ -30,7 +34,9 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
         queueBroker: options.queueBroker || globalQueueBroker,
         workerPool: options.workerPool || globalWorkerPool,
         policyEngine: options.policyEngine || globalPolicyEngine,
-        auditLog: options.auditLog || globalAuditLog
+        auditLog: options.auditLog || globalAuditLog,
+        agentRegistry: options.agentRegistry || globalRegistry,
+        eventStore: options.eventStore || globalEventStore
     };
 }
 
