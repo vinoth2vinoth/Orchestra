@@ -1,24 +1,38 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import { globalEventStore } from '../core/EventStore.ts';
-import { globalStateAdapter } from '../core/StateAdapter.ts';
 import { Orchestrator, WorkflowConfig } from './Orchestrator.ts';
 import { WorkerAgent } from '../agents/WorkerAgent.ts';
 import { MemoryMesh } from '../memory/MemoryMesh.ts';
 import { globalRegistry } from '../agents/AgentRegistry.ts';
+import { mutateProjectBoard } from '../tools/ProjectBoardStore.ts';
 import * as crypto from 'crypto';
 
-const workspaceRoot = path.join(process.cwd(), 'workspace');
-const STORAGE_PATH = 'projects.json';
+interface DaemonLease {
+    runId: string;
+    startedAt: number;
+    expiresAt: number;
+}
+
+interface AutonomousDaemonOptions {
+    staleTaskMs?: number;
+    maxAttempts?: number;
+    now?: () => number;
+}
 
 export class AutonomousDaemon {
     private isRunning = false;
     private pollIntervalMs: number;
     private timer: NodeJS.Timeout | null = null;
     private memory = new MemoryMesh();
+    private activeTasks = new Set<string>();
+    private readonly staleTaskMs: number;
+    private readonly maxAttempts: number;
+    private readonly now: () => number;
 
-    constructor(pollIntervalMs = 15000) {
+    constructor(pollIntervalMs = 15000, options: AutonomousDaemonOptions = {}) {
         this.pollIntervalMs = pollIntervalMs;
+        this.staleTaskMs = options.staleTaskMs ?? this.parsePositiveNumber(process.env.ORCHESTRA_DAEMON_STALE_TASK_MS, 10 * 60 * 1000);
+        this.maxAttempts = options.maxAttempts ?? this.parsePositiveNumber(process.env.ORCHESTRA_DAEMON_MAX_ATTEMPTS, 3);
+        this.now = options.now || Date.now;
     }
 
     public start() {
@@ -42,6 +56,10 @@ export class AutonomousDaemon {
         console.log(`[AutonomousDaemon] Stopped background monitoring`);
     }
 
+    public async runOnce() {
+        await this.processProjectsQueue();
+    }
+
     private async tick() {
         try {
             await this.processProjectsQueue();
@@ -51,51 +69,70 @@ export class AutonomousDaemon {
     }
 
     private async processProjectsQueue() {
-        await this.withProjectsLock(async () => {
-            const absolutePath = path.join(workspaceRoot, STORAGE_PATH);
-            if (!fs.existsSync(absolutePath)) return;
+        const tasksToStart: Array<{ project: any; task: any; lease: DaemonLease }> = [];
+        const now = this.now();
 
-            let dataStr = fs.readFileSync(absolutePath, 'utf8');
-            if (!dataStr) return;
-
-            const root = JSON.parse(dataStr);
+        await mutateProjectBoard((root) => {
             const projects = root.projects || [];
-            let changesMade = false;
 
             for (const project of projects) {
-                for (const task of project.tasks) {
-                    // Background heuristics: "Bot" or "Swarm" assignment + TODO/IN_PROGRESS state
-                    if (
-                        task.status !== 'DONE' &&
-                        task.assignee &&
-                        (task.assignee.toLowerCase().includes('swarm') || task.assignee.toLowerCase().includes('bot') || task.assignee.toLowerCase().includes('ai'))
-                    ) {
-                        if (task.status === 'TODO') {
-                            console.log(`[AutonomousDaemon] Picking up background task: ${task.title}`);
-                            
-                            // Optimistically set to IN_PROGRESS
-                            task.status = 'IN_PROGRESS';
-                            changesMade = true;
-                            
-                            // Fire off async swarm operation without awaiting to unblock the daemon
-                            this.executeSwarmTask(project, task).then(async (result) => {
-                                await this.finalizeTask(project.id, task.id, result);
-                            }).catch(async (err) => {
-                                console.error(`[AutonomousDaemon] Background execution failed for ${task.id}:`, err);
-                                await this.finalizeTask(project.id, task.id, `Failed: ${err.message}`, true);
+                for (const task of project.tasks || []) {
+                    if (!this.isDaemonTask(task)) continue;
+
+                    const key = this.taskKey(project.id, task.id);
+                    const lease = task.daemonLease as DaemonLease | undefined;
+                    const expiredRunId = lease?.runId || 'legacy-unleased-run';
+                    const hasExpiredLease = lease && lease.expiresAt <= now;
+                    const isLegacyUnleasedTask = task.status === 'IN_PROGRESS' && !lease;
+                    if (task.status === 'IN_PROGRESS' && (hasExpiredLease || isLegacyUnleasedTask) && !this.activeTasks.has(key)) {
+                        task.daemonAttempts = Number(task.daemonAttempts || 0);
+                        if (task.daemonAttempts >= this.maxAttempts) {
+                            task.status = 'BLOCKED';
+                            task.description = this.appendDaemonNote(task.description, `Previous background run ${expiredRunId} expired. Max retry count reached.`);
+                            delete task.daemonLease;
+                            globalEventStore.append({
+                                type: 'SYSTEM_HOOK',
+                                sourceAgentId: 'AUTONOMOUS_DAEMON',
+                                threadId: 'SYSTEM',
+                                payload: { action: 'BACKGROUND_TASK_BLOCKED', projectId: project.id, taskId: task.id, runId: expiredRunId }
                             });
+                            continue;
                         }
+
+                        task.status = 'TODO';
+                        task.description = this.appendDaemonNote(task.description, `Previous background run ${expiredRunId} expired and was returned to TODO for retry.`);
+                        delete task.daemonLease;
+                        globalEventStore.append({
+                            type: 'SYSTEM_HOOK',
+                            sourceAgentId: 'AUTONOMOUS_DAEMON',
+                            threadId: 'SYSTEM',
+                            payload: { action: 'BACKGROUND_TASK_REQUEUED', projectId: project.id, taskId: task.id, expiredRunId }
+                        });
+                    }
+
+                    if (task.status === 'TODO' && !this.activeTasks.has(key)) {
+                        const nextLease = this.createLease();
+                        task.status = 'IN_PROGRESS';
+                        task.daemonAttempts = Number(task.daemonAttempts || 0) + 1;
+                        task.daemonLease = nextLease;
+                        tasksToStart.push({
+                            project: this.clone(project),
+                            task: this.clone(task),
+                            lease: nextLease
+                        });
                     }
                 }
             }
 
-            if (changesMade) {
-                fs.writeFileSync(absolutePath, JSON.stringify(root, null, 2), 'utf8');
-            }
+            return root;
         });
+
+        for (const { project, task, lease } of tasksToStart) {
+            this.launchBackgroundTask(project, task, lease);
+        }
     }
 
-    private async executeSwarmTask(project: any, task: any) {
+    protected async executeSwarmTask(project: any, task: any) {
         const orchestrator = new Orchestrator();
         const threadId = crypto.randomUUID();
 
@@ -133,51 +170,92 @@ export class AutonomousDaemon {
         }
     }
 
-    private async finalizeTask(projectId: string, taskId: string, daemonConclusion: any, isError = false) {
-        await this.withProjectsLock(async () => {
-            // Re-read file while holding the lock to avoid concurrent JSON writes.
-            const absolutePath = path.join(workspaceRoot, STORAGE_PATH);
-            if (!fs.existsSync(absolutePath)) return;
+    protected async finalizeTask(projectId: string, taskId: string, runId: string, daemonConclusion: any, isError = false) {
+        let finalized = false;
+        let ignoredAsStale = false;
 
-            let dataStr = fs.readFileSync(absolutePath, 'utf8');
-            const root = JSON.parse(dataStr);
-            const projects = root.projects || [];
-            let updated = false;
-
+        await mutateProjectBoard((root) => {
             const conclusionStr = typeof daemonConclusion === 'string' ? daemonConclusion : JSON.stringify(daemonConclusion);
 
-            for (const project of projects) {
+            for (const project of root.projects || []) {
                 if (project.id === projectId) {
-                    for (const t of project.tasks) {
+                    for (const t of project.tasks || []) {
                         if (t.id === taskId) {
+                            if (t.daemonLease?.runId !== runId) {
+                                ignoredAsStale = true;
+                                globalEventStore.append({
+                                    type: 'SYSTEM_HOOK',
+                                    sourceAgentId: 'AUTONOMOUS_DAEMON',
+                                    threadId: 'SYSTEM',
+                                    payload: { action: 'BACKGROUND_TASK_STALE_FINALIZE_IGNORED', projectId, taskId, runId }
+                                });
+                                return root;
+                            }
+
                             t.status = isError ? 'TODO' : 'DONE';
-                            t.description = (t.description ? t.description + '\n\n' : '') + `[Bot Output]:\n${conclusionStr.substring(0, 500)}`;
-                            updated = true;
+                            delete t.daemonLease;
+                            t.description = this.appendDaemonNote(t.description, `${isError ? 'Failed' : 'Completed'} run ${runId}:\n${conclusionStr.substring(0, 500)}`);
+                            finalized = true;
                         }
                     }
                 }
             }
 
-            if (updated) {
-               fs.writeFileSync(absolutePath, JSON.stringify(root, null, 2), 'utf8');
-               console.log(`[AutonomousDaemon] Finalized task ${taskId}`);
-            }
+            return root;
+        });
+
+        if (finalized) {
+            console.log(`[AutonomousDaemon] Finalized task ${taskId}`);
+        } else if (ignoredAsStale) {
+            console.log(`[AutonomousDaemon] Ignored stale finalize for task ${taskId}`);
+        }
+    }
+
+    private launchBackgroundTask(project: any, task: any, lease: DaemonLease) {
+        const key = this.taskKey(project.id, task.id);
+        this.activeTasks.add(key);
+        console.log(`[AutonomousDaemon] Picking up background task: ${task.title}`);
+
+        this.executeSwarmTask(project, task).then(async (result) => {
+            await this.finalizeTask(project.id, task.id, lease.runId, result);
+        }).catch(async (err) => {
+            console.error(`[AutonomousDaemon] Background execution failed for ${task.id}:`, err);
+            await this.finalizeTask(project.id, task.id, lease.runId, `Failed: ${err.message}`, true);
+        }).finally(() => {
+            this.activeTasks.delete(key);
         });
     }
 
-    private async withProjectsLock<T>(operation: () => Promise<T> | T): Promise<T> {
-        const lockKey = 'autonomous_daemon:projects_json';
-        for (let attempt = 0; attempt < 20; attempt++) {
-            if (await globalStateAdapter.acquireLock(lockKey, 5000)) {
-                try {
-                    return await operation();
-                } finally {
-                    await globalStateAdapter.releaseLock(lockKey);
-                }
-            }
-            await new Promise(resolve => setTimeout(resolve, 50));
-        }
+    private isDaemonTask(task: any): boolean {
+        return task.status !== 'DONE' &&
+            task.status !== 'BLOCKED' &&
+            task.assignee &&
+            (task.assignee.toLowerCase().includes('swarm') || task.assignee.toLowerCase().includes('bot') || task.assignee.toLowerCase().includes('ai'));
+    }
 
-        throw new Error('Could not acquire lock for workspace/projects.json');
+    private createLease(): DaemonLease {
+        const startedAt = this.now();
+        return {
+            runId: crypto.randomUUID(),
+            startedAt,
+            expiresAt: startedAt + this.staleTaskMs
+        };
+    }
+
+    private taskKey(projectId: string, taskId: string): string {
+        return `${projectId}:${taskId}`;
+    }
+
+    private clone<T>(value: T): T {
+        return JSON.parse(JSON.stringify(value));
+    }
+
+    private appendDaemonNote(description: string | undefined, note: string): string {
+        return `${description ? `${description}\n\n` : ''}[Bot Output]:\n${note}`;
+    }
+
+    private parsePositiveNumber(value: string | undefined, fallback: number): number {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
     }
 }

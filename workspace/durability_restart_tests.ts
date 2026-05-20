@@ -142,14 +142,21 @@ async function testStaleLeaseResultCannotWinCurrentLease() {
       attempts++;
       if (attempts === 1) {
         const staleLeaseId = payload.leaseId;
-        setTimeout(() => {
-          void broker.publishResult({
+        void (async () => {
+          await waitFor(
+            () => broker.getTaskRecord(payload.taskId),
+            record => Boolean(record && record.attempts >= 2 && record.leaseId !== staleLeaseId),
+            3000
+          );
+          await broker.publishResult({
             taskId: payload.taskId,
             status: 'success',
             result: { staleLeaseWon: true },
             leaseId: staleLeaseId
           });
-        }, 350);
+        })().catch(err => {
+          console.error(`Failed to publish stale lease result in durability test: ${err.message}`);
+        });
         return;
       }
 
