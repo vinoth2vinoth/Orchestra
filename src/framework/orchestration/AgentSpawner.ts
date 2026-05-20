@@ -2,7 +2,7 @@ import { BaseAgent } from '../agents/BaseAgent.ts';
 import { WorkerAgent } from '../agents/WorkerAgent.ts';
 import { MemoryMesh } from '../memory/MemoryMesh.ts';
 import { LLMConfig } from '../llm/ProviderRegistry.ts';
-import { globalEventStore } from '../core/EventStore.ts';
+import { RuntimeContextOptions, createRuntimeContext } from '../core/RuntimeContext.ts';
 
 export class AgentSpawner {
     public static spawnSpecialist(
@@ -10,7 +10,8 @@ export class AgentSpawner {
         expertise: string,
         memory: MemoryMesh,
         llmConfig: LLMConfig,
-        parentId: string
+        parentId: string,
+        runtime?: RuntimeContextOptions
     ): BaseAgent {
         const description = `You are a specialist dynamically spawned to handle a sub-task. Your expertise is in: ${expertise}`;
         
@@ -21,14 +22,19 @@ export class AgentSpawner {
             memory,
             llmConfig,
             [expertise.toLowerCase().includes('search') ? 'web_search' : 'code_interpreter'],
-            parentId
+            parentId,
+            undefined,
+            undefined,
+            undefined,
+            runtime
         );
 
         return newAgent;
     }
 
-    public static terminate(agentId: string) {
-        globalEventStore.append({
+    public static terminate(agentId: string, runtime?: RuntimeContextOptions) {
+        const services = createRuntimeContext(runtime);
+        services.eventStore.append({
             type: 'AGENT_TERMINATED',
             sourceAgentId: 'ORCHESTRATOR',
             targetAgentId: agentId,

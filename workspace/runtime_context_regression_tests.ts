@@ -1,4 +1,5 @@
 import { BaseAgent } from '../src/framework/agents/BaseAgent.ts';
+import { ManagerAgent } from '../src/framework/agents/ManagerAgent.ts';
 import { Orchestrator, WorkflowConfig } from '../src/framework/orchestration/Orchestrator.ts';
 import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
 import { PluginRegistry } from '../src/framework/core/PluginRegistry.ts';
@@ -6,6 +7,9 @@ import { getExecutionContext } from '../src/framework/core/ExecutionContext.ts';
 import { StateStore, globalStateStore } from '../src/framework/orchestration/StateStore.ts';
 import { WorkflowSuspendedError } from '../src/framework/orchestration/WorkflowSuspendedError.ts';
 import type { CheckpointData } from '../src/framework/orchestration/Checkpointer.ts';
+import type { FrameworkEvent } from '../src/framework/core/types.ts';
+import { AgentRegistry } from '../src/framework/agents/AgentRegistry.ts';
+import { z } from 'zod';
 
 class EchoManagerAgent extends BaseAgent {
   async execute(task: any, threadId: string): Promise<any> {
@@ -73,6 +77,45 @@ class SuspendingAgent extends BaseAgent {
   }
 }
 
+class RuntimeMutationAgent extends BaseAgent {
+  async execute(): Promise<any> {
+    this.mutate('runtime-scoped-patch');
+    this.reset();
+    this.hostTool('runtime_scoped_tool', {
+      description: 'Runtime scoped test tool.',
+      parameters: z.object({}),
+      execute: async () => 'ok'
+    });
+    return 'runtime-mutated';
+  }
+}
+
+class RecordingEventStore {
+  public events: FrameworkEvent[] = [];
+
+  append(event: Omit<FrameworkEvent, 'id' | 'timestamp'>): FrameworkEvent {
+    const fullEvent = {
+      ...event,
+      id: `recording-event-${this.events.length + 1}`,
+      timestamp: Date.now()
+    } as FrameworkEvent;
+    this.events.push(fullEvent);
+    return fullEvent;
+  }
+
+  getEventsByThread(threadId: string): FrameworkEvent[] {
+    return this.events.filter(event => event.threadId === threadId);
+  }
+
+  getLogs(): FrameworkEvent[] {
+    return [...this.events];
+  }
+
+  clear() {
+    this.events = [];
+  }
+}
+
 class InMemoryCheckpointer {
   private checkpoints = new Map<string, CheckpointData>();
 
@@ -91,6 +134,85 @@ class InMemoryCheckpointer {
 
   async clearCheckpoint(threadId: string): Promise<void> {
     this.checkpoints.delete(threadId);
+  }
+}
+
+async function testWorkflowInjectsRuntimeIntoAgents() {
+  const eventStore = new RecordingEventStore();
+  const agent = new RuntimeMutationAgent(
+    'RuntimeMutationAgent',
+    'Mutates its own runtime scoped state.',
+    'MANAGER',
+    new MemoryMesh(),
+    { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+    [],
+    undefined,
+    undefined,
+    undefined,
+    'runtime-mutation-agent'
+  );
+
+  const result = await new Orchestrator({ eventStore: eventStore as any }).executeWorkflow(
+    'mutate runtime',
+    {
+      paradigm: 'HIERARCHICAL',
+      agents: [agent],
+      maxRetries: 0
+    },
+    `RUNTIME_AGENT_SCOPE_${Date.now()}`
+  );
+
+  if (result !== 'runtime-mutated') {
+    throw new Error(`Runtime mutation agent returned unexpected result: ${JSON.stringify(result)}`);
+  }
+
+  const actions = eventStore.events.map(event => event.payload?.action);
+  for (const action of ['INSTRUCTION_MUTATED', 'AGENT_STATE_RESET', 'TOOL_HOSTED_LOCALLY']) {
+    if (!actions.includes(action)) {
+      throw new Error(`Scoped event store missed ${action}: ${JSON.stringify(eventStore.events)}`);
+    }
+  }
+}
+
+async function testManagerUsesScopedAgentRegistryForToolGrant() {
+  const scopedRegistry = new AgentRegistry();
+  const manager = new ManagerAgent(
+    'ScopedGrantManager',
+    'Approves low-risk tool grants.',
+    'MANAGER',
+    new MemoryMesh(),
+    { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+    [],
+    undefined,
+    undefined,
+    undefined,
+    'scoped-grant-manager'
+  );
+  const worker = new RuntimeMutationAgent(
+    'ScopedGrantWorker',
+    'Receives scoped tool grants.',
+    'WORKER',
+    new MemoryMesh(),
+    { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+    [],
+    undefined,
+    undefined,
+    undefined,
+    'scoped-grant-worker'
+  );
+
+  scopedRegistry.register(manager);
+  scopedRegistry.register(worker);
+  manager.setSubordinates([worker]);
+  manager.setRuntimeContext({ agentRegistry: scopedRegistry });
+
+  const review = await manager.reviewResourceRequest(worker.card.id, 'discovery_index', 'Need local discovery access.', `RUNTIME_GRANT_${Date.now()}`);
+
+  if (!review.authorized) {
+    throw new Error(`Expected scoped manager auto-grant, got ${JSON.stringify(review)}`);
+  }
+  if (!worker.card.capabilities.includes('tool:discovery_index')) {
+    throw new Error(`Scoped registry did not grant tool to worker: ${JSON.stringify(worker.card.capabilities)}`);
   }
 }
 
@@ -291,6 +413,8 @@ async function testConcurrentWorkflowsDoNotMutateSharedTaskObject() {
 }
 
 const tests = [
+  ['workflow injects runtime into agents', testWorkflowInjectsRuntimeIntoAgents],
+  ['manager uses scoped agent registry for tool grant', testManagerUsesScopedAgentRegistryForToolGrant],
   ['runtime plugin and tenant scope', testRuntimePluginAndTenantScope],
   ['runtime checkpointer scope', testRuntimeCheckpointerScope],
   ['runtime state store scope for suspended workflow', testRuntimeStateStoreScopeForSuspendedWorkflow],

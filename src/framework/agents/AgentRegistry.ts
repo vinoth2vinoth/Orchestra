@@ -1,6 +1,8 @@
 import { BaseAgent } from './BaseAgent.ts';
 import { globalToolRegistry } from '../tools/ToolRegistry.ts';
 import { globalEventStore } from '../core/EventStore.ts';
+import type { ToolRegistry } from '../tools/ToolRegistry.ts';
+import type { EventStore } from '../core/EventStore.ts';
 
 /**
  * Dynamic Agent Registry (Dimension 02)
@@ -9,6 +11,8 @@ import { globalEventStore } from '../core/EventStore.ts';
  */
 export class AgentRegistry {
     private agents: Map<string, BaseAgent> = new Map();
+    private toolRegistry: ToolRegistry;
+    private eventStore: EventStore;
     
     // Default capability mappings per role
     private roleDefaults: Record<string, string[]> = {
@@ -17,6 +21,11 @@ export class AgentRegistry {
         'CRITIC': ['code_interpreter', 'core_logic', 'validation', 'security_audit', 'quality_assurance'],
         'PLANNER': ['planning', 'core_logic', 'knowledge_base', 'strategic', 'market_analysis', 'forecasting']
     };
+
+    constructor(options: { toolRegistry?: ToolRegistry; eventStore?: EventStore } = {}) {
+        this.toolRegistry = options.toolRegistry || globalToolRegistry;
+        this.eventStore = options.eventStore || globalEventStore;
+    }
 
     public register(agent: BaseAgent) {
         this.agents.set(agent.card.id, agent);
@@ -62,7 +71,7 @@ export class AgentRegistry {
         // Unique set of effective capabilities
         const uniqueCapabilities = Array.from(new Set(effectiveCapabilities));
 
-        return globalToolRegistry.getToolsForAgent(uniqueCapabilities);
+        return this.toolRegistry.getToolsForAgent(uniqueCapabilities);
     }
 
     public getAllAgents(): BaseAgent[] {
@@ -82,7 +91,7 @@ export class AgentRegistry {
             if (!agent.card.capabilities.includes(capability)) {
                 agent.card.capabilities.push(capability);
                 
-                globalEventStore.append({
+                this.eventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: 'SYSTEM',
                     targetAgentId: agentId,

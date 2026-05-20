@@ -1,6 +1,8 @@
 import { globalEventStore } from '../core/EventStore.ts';
 import { WorkflowSuspendedError } from '../orchestration/WorkflowSuspendedError.ts';
 import { globalAuditLog } from './AuditLog.ts';
+import type { EventStore } from '../core/EventStore.ts';
+import type { AuditLog } from './AuditLog.ts';
 
 type ApprovalResolution = 'APPROVED' | 'REJECTED' | 'MODIFIED';
 
@@ -23,6 +25,11 @@ export class EscalationManager {
     private pendingApprovals = new Map<string, PendingApproval>();
     private failureCounts: Map<string, number> = new Map();
 
+    constructor(
+        private eventStore: EventStore = globalEventStore,
+        private auditLog: AuditLog = globalAuditLog
+    ) {}
+
     /**
      * Records a failure and determines the next escalation tier.
      */
@@ -41,9 +48,9 @@ export class EscalationManager {
             tier = EscalationTier.TIER_2_ADJUDICATION;
         }
 
-        await globalAuditLog.log(threadId, agentId, 'ESCALATION_TRIGGERED', `Tier: ${tier} triggered due to ${count} consecutive failures. Error: ${error.message}`);
+        await this.auditLog.log(threadId, agentId, 'ESCALATION_TRIGGERED', `Tier: ${tier} triggered due to ${count} consecutive failures. Error: ${error.message}`);
         
-        globalEventStore.append({
+        this.eventStore.append({
             type: 'SYSTEM_HOOK',
             sourceAgentId: 'GOVERNANCE',
             threadId,
@@ -70,9 +77,9 @@ export class EscalationManager {
     ): Promise<{ resolution: ApprovalResolution; feedback?: string }> {
         const approvalId = crypto.randomUUID();
 
-        await globalAuditLog.log(threadId, agentId, 'HUMAN_INTERVENTION_REQUESTED', actionDescription);
+        await this.auditLog.log(threadId, agentId, 'HUMAN_INTERVENTION_REQUESTED', actionDescription);
 
-        globalEventStore.append({
+        this.eventStore.append({
             type: 'HUMAN_INTERVENTION_REQUIRED',
             sourceAgentId: agentId,
             threadId,
@@ -95,9 +102,9 @@ export class EscalationManager {
             this.pendingApprovals.delete(approvalId);
             this.failureCounts.delete(`${pending.threadId}:${pending.agentId}`);
 
-            await globalAuditLog.log(pending.threadId, pending.agentId, 'HUMAN_INTERVENTION_RESOLVED', `Resolution: ${resolution}. Feedback: ${feedback || 'None'}`);
+            await this.auditLog.log(pending.threadId, pending.agentId, 'HUMAN_INTERVENTION_RESOLVED', `Resolution: ${resolution}. Feedback: ${feedback || 'None'}`);
 
-            globalEventStore.append({
+            this.eventStore.append({
                 type: 'MEMORY_STORED', 
                 sourceAgentId: 'SYSTEM',
                 threadId: pending.threadId,

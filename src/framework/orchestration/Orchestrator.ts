@@ -118,8 +118,42 @@ export class Orchestrator {
         });
     }
 
+    private assignRuntimeToAgents(agents: BaseAgent[], runtime: RuntimeServices) {
+        const visited = new Set<string>();
+        const assign = (agent: BaseAgent) => {
+            if (visited.has(agent.card.id)) return;
+            visited.add(agent.card.id);
+            agent.setRuntimeContext(runtime);
+            runtime.agentRegistry.register(agent);
+
+            const subordinates = (agent as any).subordinates;
+            if (Array.isArray(subordinates)) {
+                subordinates.forEach((sub: BaseAgent) => assign(sub));
+            }
+        };
+
+        agents.forEach(assign);
+    }
+
     public async executeWorkflow(task: any, config: WorkflowConfig, threadId: string): Promise<any> {
-        const workflowRuntime = config.runtime ? createRuntimeContext({ ...this.runtime, ...config.runtime }) : this.runtime;
+        const workflowRuntime = config.runtime ? createRuntimeContext({
+            tenantId: config.runtime.tenantId || this.runtime.tenantId,
+            stateAdapter: config.runtime.stateAdapter || this.runtime.stateAdapter,
+            pluginRegistry: config.runtime.pluginRegistry || this.runtime.pluginRegistry,
+            circuitBreakers: config.runtime.circuitBreakers || this.runtime.circuitBreakers,
+            queueBroker: config.runtime.queueBroker || this.runtime.queueBroker,
+            workerPool: config.runtime.workerPool || this.runtime.workerPool,
+            policyEngine: config.runtime.policyEngine || this.runtime.policyEngine,
+            auditLog: config.runtime.auditLog || this.runtime.auditLog,
+            agentRegistry: config.runtime.agentRegistry || ((config.runtime.eventStore || config.runtime.toolRegistry) ? undefined : this.runtime.agentRegistry),
+            eventStore: config.runtime.eventStore || this.runtime.eventStore,
+            checkpointer: config.runtime.checkpointer || this.runtime.checkpointer,
+            stateStore: config.runtime.stateStore || this.runtime.stateStore,
+            escalationManager: config.runtime.escalationManager || ((config.runtime.eventStore || config.runtime.auditLog) ? undefined : this.runtime.escalationManager),
+            genealogy: config.runtime.genealogy || (config.runtime.eventStore ? undefined : this.runtime.genealogy),
+            toolRegistry: config.runtime.toolRegistry || this.runtime.toolRegistry
+        }) : this.runtime;
+        this.assignRuntimeToAgents(config.agents, workflowRuntime);
         workflowRuntime.eventStore.append({
             type: 'LLM_GENERATION_STARTED', // Loosely representing workflow start
             sourceAgentId: 'ORCHESTRATOR',

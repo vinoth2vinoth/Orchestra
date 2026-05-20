@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { globalEventStore } from '../core/EventStore.ts';
 import { Sanitizer } from '../security/Sanitizer.ts';
+import type { EventStore } from '../core/EventStore.ts';
 
 /**
  * ToolGuard provides middleware-like protection for tool execution.
@@ -14,7 +15,8 @@ export class ToolGuard {
         agentId: string,
         toolName: string,
         schema: T,
-        execute: (args: z.infer<T>) => Promise<any>
+        execute: (args: z.infer<T>) => Promise<any>,
+        eventStore: EventStore = globalEventStore
     ) {
         return async (args: z.infer<T>) => {
             try {
@@ -41,7 +43,7 @@ export class ToolGuard {
                 }
 
                 // 2. Telemetry: Pre-execution
-                globalEventStore.append({
+                eventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: agentId,
                     threadId: 'GLOBAL',

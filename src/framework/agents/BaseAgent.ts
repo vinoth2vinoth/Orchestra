@@ -1,28 +1,24 @@
 import { AgentCard } from '../core/types.ts';
 import { AgentFrameworkError } from '../core/ErrorHandler.ts';
-import { globalEventStore } from '../core/EventStore.ts';
-import { globalPluginRegistry } from '../core/PluginRegistry.ts';
 import { MemoryMesh } from '../memory/MemoryMesh.ts';
 import { LLMConfig, ProviderRegistry } from '../llm/ProviderRegistry.ts';
 import { LLMAdapter, LLMResponse } from '../llm/LLMAdapter.ts';
 import { CircuitBreaker } from '../resilience/CircuitBreaker.ts';
-import { globalToolRegistry } from '../tools/ToolRegistry.ts';
-import { globalEscalationManager } from '../governance/EscalationManager.ts';
 import { WorkflowSuspendedError } from '../orchestration/WorkflowSuspendedError.ts';
-import { globalRegistry } from './AgentRegistry.ts';
 import { tool } from 'ai';
 import { z } from 'zod';
 
 import { Sanitizer } from '../security/Sanitizer.ts';
 import { ToolGuard } from '../tools/ToolGuard.ts';
 import { TelemetrySystem } from '../telemetry/TelemetrySystem.ts';
-import { globalStateAdapter } from '../core/StateAdapter.ts';
+import { RuntimeContextOptions, RuntimeServices, createRuntimeContext } from '../core/RuntimeContext.ts';
 
 export abstract class BaseAgent {
     public card: AgentCard;
     public memory: MemoryMesh;
     public llmConfig: LLMConfig;
     private circuitBreaker: CircuitBreaker;
+    protected runtime: RuntimeServices;
     public instructionPatches: string[] = [];
     public localTools: Record<string, any> = {};
 
@@ -36,7 +32,8 @@ export abstract class BaseAgent {
         parentId?: string,
         priority?: number,
         urgency?: number,
-        id?: string
+        id?: string,
+        runtime?: RuntimeContextOptions
     ) {
         this.card = {
             id: id || crypto.randomUUID(),
@@ -54,14 +51,19 @@ export abstract class BaseAgent {
         this.memory = memory;
         this.llmConfig = llmConfig;
         this.circuitBreaker = new CircuitBreaker();
+        this.runtime = createRuntimeContext(runtime);
 
-        globalEventStore.append({
+        this.runtime.eventStore.append({
             type: 'AGENT_SPAWNED',
             sourceAgentId: parentId || 'SYSTEM',
             targetAgentId: this.card.id,
             threadId: 'GLOBAL', 
             payload: this.card
         });
+    }
+
+    public setRuntimeContext(runtime: RuntimeServices | RuntimeContextOptions) {
+        this.runtime = createRuntimeContext(runtime);
     }
 
     /**
@@ -89,7 +91,7 @@ export abstract class BaseAgent {
 
     public mutate(patch: string) {
         this.instructionPatches.push(patch);
-        globalEventStore.append({
+        this.runtime.eventStore.append({
             type: 'SYSTEM_HOOK',
             sourceAgentId: 'ORCHESTRATOR',
             targetAgentId: this.card.id,
@@ -104,7 +106,7 @@ export abstract class BaseAgent {
     public reset() {
         this.instructionPatches = [];
         this.localTools = {};
-        globalEventStore.append({
+        this.runtime.eventStore.append({
             type: 'SYSTEM_HOOK',
             sourceAgentId: 'SYSTEM',
             targetAgentId: this.card.id,
@@ -121,10 +123,10 @@ export abstract class BaseAgent {
         this.localTools[name] = tool({
             description: toolDefinition.description,
             parameters: toolDefinition.parameters,
-            execute: ToolGuard.wrap(this.card.id, name, toolDefinition.parameters, toolDefinition.execute)
+            execute: ToolGuard.wrap(this.card.id, name, toolDefinition.parameters, toolDefinition.execute, this.runtime.eventStore)
         } as any);
 
-        globalEventStore.append({
+        this.runtime.eventStore.append({
             type: 'SYSTEM_HOOK',
             sourceAgentId: this.card.id,
             threadId: 'GLOBAL',
@@ -240,7 +242,7 @@ FORMAT: End your response with the verification status.
             const injectionCheck = Sanitizer.detectInjection(lastMessage.content);
             if (injectionCheck.isInjected) {
                 console.warn(`[SECURITY_ALERT] Potential prompt injection detected in agent ${this.card.name}! Quarantining request...`);
-                globalEventStore.append({
+                this.runtime.eventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: this.card.id,
                     threadId,
@@ -276,7 +278,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
         const wisdom = await this.consultWisdom(messages[messages.length - 1]?.content || '');
         const enhancedSystemInstruction = `${systemInstruction}${coreMemBlock}\n${Sanitizer.wrapSterile(wisdom, 'LEARNED_WISDOM')}`;
 
-        const baseTools = globalRegistry.getToolsForAgent(this.card.id);
+        const baseTools = this.runtime.agentRegistry.getToolsForAgent(this.card.id);
         const tools = {
             ...baseTools,
             ...this.localTools,
@@ -292,7 +294,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                 }), async ({ block, content }) => {
                     this.memory.updateCoreMemory(this.card.id, block, content, true);
                     return `Successfully appended to ${block} core memory.`;
-                })
+                }, this.runtime.eventStore)
             } as any),
             core_memory_replace: tool({
                 description: 'Completely replace the contents of a Core Memory block (persona or human). Use with caution.',
@@ -306,7 +308,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                 }), async ({ block, content }) => {
                     this.memory.updateCoreMemory(this.card.id, block, content, false);
                     return `Successfully replaced ${block} core memory.`;
-                })
+                }, this.runtime.eventStore)
             } as any),
             archival_memory_search: tool({
                 description: 'Search the agent\'s archival semantic and procedural memory (vector search) for facts, past experiences, or rules.',
@@ -321,7 +323,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                     const results = await this.memory.searchSimilarMemories(query, topK);
                     if (results.length === 0) return "No matches found in archival memory.";
                     return `Found ${results.length} memories:\n` + results.map((r, i) => `${i+1}. [${r.tier}] ${r.content}`).join('\n');
-                })
+                }, this.runtime.eventStore)
             } as any),
             archival_memory_insert: tool({
                 description: 'Write a new fact, entity, or piece of knowledge into the archival semantic memory. Use this for info that doesn\'t need to be in core memory but should be remembered.',
@@ -336,7 +338,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                     const scrubbedContent = Sanitizer.scrubSecrets(content);
                     await this.memory.addSemanticMemory(scrubbedContent, entities);
                     return `Successfully saved to archival semantic memory. (Note: Content was scrubbed for secrets)`;
-                })
+                }, this.runtime.eventStore)
             } as any),
             write_to_local_blackboard: tool({
                 description: 'Write temporary state or data to your local blackboard before sharing it globally with the swarm. Values MUST be serializable strings.',
@@ -350,12 +352,12 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                 }), async (args) => {
                     const scrubbedValue = Sanitizer.scrubSecrets(args.value);
                     const bbKey = `bb:${this.card.id}`;
-                    await globalStateAdapter.mutate<Record<string, any>>(bbKey, currentBB => ({
+                    await this.runtime.stateAdapter.mutate<Record<string, any>>(bbKey, currentBB => ({
                         ...(currentBB || {}),
                         [args.key]: scrubbedValue
                     }));
                     return `Successfully wrote to local blackboard under key: ${args.key}`;
-                })
+                }, this.runtime.eventStore)
             } as any),
             requestHumanAssistance: tool({
                 description: 'Use this tool when you encounter significant uncertainty, a moral dilemma, or a high-risk operation that requires human verification before proceeding.',
@@ -368,14 +370,14 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                     context: z.string()
                 }), async (args) => {
                     const { reason, context } = args;
-                    const res = await globalEscalationManager.requestApproval(
+                    const res = await this.runtime.escalationManager.requestApproval(
                         threadId,
                         this.card.id,
                         `AGENT_UNCERTAINTY: ${reason}`,
                         { reason, detailedContext: context }
                     );
                     return `Human provided resolution: ${res.resolution}. Feedback: ${res.feedback || 'None'}`;
-                })
+                }, this.runtime.eventStore)
             } as any),
             requestMissingTool: tool({
                 description: 'Use this tool to pause your execution and ask the human or admin to provide a tool you need but is not available.',
@@ -390,7 +392,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                     const { requestedToolName, justification } = args;
                     const parentId = this.card.lineage.parentId;
                     if (parentId && parentId !== 'SYSTEM' && parentId !== 'ORCHESTRATOR') {
-                        const parent = globalRegistry.get(parentId);
+                        const parent = this.runtime.agentRegistry.get(parentId);
                         if (parent && typeof (parent as any).reviewResourceRequest === 'function') {
                             const res = await (parent as any).reviewResourceRequest(
                                 this.card.id, 
@@ -405,19 +407,19 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                             }
                         }
                     }
-                    const res = await globalEscalationManager.requestApproval(
+                    const res = await this.runtime.escalationManager.requestApproval(
                         threadId,
                         this.card.id,
                         `Agent requests missing tool: ${requestedToolName}. Reason: ${justification}`,
                         { requestedToolName, justification }
                     );
                     return `Human provided resolution: ${res.resolution}. Feedback: ${res.feedback || 'None'}`;
-                })
+                }, this.runtime.eventStore)
             } as any)
         };
 
-        const modifier = await globalPluginRegistry.emitBeforeLLMCall(this.card.id, this.llmConfig, messages, threadId);
-        await globalPluginRegistry.emitOnLLMCall(this.card.id, modifier.messages, threadId);
+        const modifier = await this.runtime.pluginRegistry.emitBeforeLLMCall(this.card.id, this.llmConfig, messages, threadId);
+        await this.runtime.pluginRegistry.emitOnLLMCall(this.card.id, modifier.messages, threadId);
 
         const resultPromise = this.circuitBreaker.execute(async () => {
             try {
@@ -427,7 +429,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                 for await (const chunk of stream.textStream) {
                     fullText += chunk;
                     // Emit streaming thought event
-                    globalEventStore.append({
+                    this.runtime.eventStore.append({
                         type: 'SYSTEM_HOOK', 
                         sourceAgentId: this.card.id,
                         threadId,
@@ -490,7 +492,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
 
         const result = await resultPromise;
 
-        await globalPluginRegistry.emitOnLLMResponse(this.card.id, result, result.usage, threadId);
+        await this.runtime.pluginRegistry.emitOnLLMResponse(this.card.id, result, result.usage, threadId);
 
         // Vercel SDK might capture the thrown WorkflowSuspendedError inside toolResults
         if (result.toolResults) {
@@ -530,8 +532,8 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
         const wisdom = await this.consultWisdom(optimizedMessages[optimizedMessages.length - 1]?.content || '');
         const enhancedSystemInstruction = `${systemInstruction}${coreMemBlock}\n${Sanitizer.wrapSterile(wisdom, 'LEARNED_WISDOM')}`;
 
-        const modifier = await globalPluginRegistry.emitBeforeLLMCall(this.card.id, this.llmConfig, optimizedMessages, threadId);
-        await globalPluginRegistry.emitOnLLMCall(this.card.id, modifier.messages, threadId);
+        const modifier = await this.runtime.pluginRegistry.emitBeforeLLMCall(this.card.id, this.llmConfig, optimizedMessages, threadId);
+        await this.runtime.pluginRegistry.emitOnLLMCall(this.card.id, modifier.messages, threadId);
         
         const result = await this.circuitBreaker.execute(async () => {
             try {
@@ -558,7 +560,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
             }
         });
 
-        await globalPluginRegistry.emitOnLLMResponse(this.card.id, result, result.usage, threadId);
+        await this.runtime.pluginRegistry.emitOnLLMResponse(this.card.id, result, result.usage, threadId);
 
         if (result.usage) {
             TelemetrySystem.emitLLMUsage(

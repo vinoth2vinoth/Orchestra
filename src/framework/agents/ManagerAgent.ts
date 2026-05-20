@@ -1,6 +1,5 @@
 import { BaseAgent } from './BaseAgent.ts';
 import { AgentSpawner } from '../orchestration/AgentSpawner.ts';
-import { globalEscalationManager } from '../governance/EscalationManager.ts';
 
 export class ManagerAgent extends BaseAgent {
     public subordinates: BaseAgent[] = [];
@@ -22,8 +21,7 @@ export class ManagerAgent extends BaseAgent {
         // OPTIMIZATION: Instant Auto-Grant based on Policy (Zero Latency)
         const allowedResources = this.resourcePolicies.get(subRole) || [];
         if (allowedResources.includes(resourceName) || resourceName.startsWith('discovery')) {
-            const { globalRegistry } = await import('./AgentRegistry.ts');
-            globalRegistry.grantTool(subordinateId, resourceName);
+            this.runtime.agentRegistry.grantTool(subordinateId, resourceName);
             return { authorized: true, feedback: "Resource access AUTO-GRANTED based on standard operational policy." };
         }
 
@@ -42,8 +40,7 @@ Respond with 'GRANT' if approved, or 'DENY' with reasons.`;
 
         if (review.text.toUpperCase().includes('GRANT')) {
             // Grant the tool via the registry
-            const { globalRegistry } = await import('./AgentRegistry.ts');
-            globalRegistry.grantTool(subordinateId, resourceName);
+            this.runtime.agentRegistry.grantTool(subordinateId, resourceName);
             
             return { authorized: true, feedback: "Resource access granted by Manager." };
         } else {
@@ -58,7 +55,7 @@ Respond with 'GRANT' if approved, or 'DENY' with reasons.`;
         // DISABLE AUTO-ESCALATION based on keywords for tests
         /*
         if (taskStr.toLowerCase().includes('delete') || taskStr.toLowerCase().includes('production')) {
-            const approval = await globalEscalationManager.requestApproval(
+            const approval = await this.runtime.escalationManager.requestApproval(
                 threadId,
                 this.card.id,
                 'Manager is about to execute a potentially sensitive task.',
@@ -95,7 +92,8 @@ Respond with 'GRANT' if approved, or 'DENY' with reasons.`;
                         decision.expertise,
                         this.memory,
                         this.llmConfig,
-                        this.card.id
+                        this.card.id,
+                        this.runtime
                     );
                     this.subordinates.push(tempAgent);
                 }
@@ -164,7 +162,7 @@ Reply with 'OK' if sufficient. Otherwise, describe specifically what is missing 
                             // If it doesn't, we just fall through to the break
                             if (humanHelp.text.toLowerCase().includes('requesthumanassistance')) {
                                 // Explicitly call it if for some reason tool use wasn't automatic
-                                await globalEscalationManager.requestApproval(threadId, this.card.id, `Subordinate failure on ${sub.card.name}`, { subTask, critique: qcCheck.text });
+                                await this.runtime.escalationManager.requestApproval(threadId, this.card.id, `Subordinate failure on ${sub.card.name}`, { subTask, critique: qcCheck.text });
                             }
                         }
                         throw new Error(`QC_FAILED: ${qcCheck.text}`);
@@ -184,7 +182,7 @@ Reply with 'OK' if sufficient. Otherwise, describe specifically what is missing 
             
             // Terminate temporary agents to free resources
             if (sub.card.name.startsWith('Temp')) {
-                AgentSpawner.terminate(sub.card.id);
+                AgentSpawner.terminate(sub.card.id, this.runtime);
             }
         }
 

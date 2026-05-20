@@ -1,7 +1,4 @@
 import { BaseAgent } from './BaseAgent.ts';
-import { globalGenealogy } from '../governance/GenealogyTracker.ts';
-import { globalRegistry } from './AgentRegistry.ts';
-import { globalEventStore } from '../core/EventStore.ts';
 import { Sanitizer } from '../security/Sanitizer.ts';
 import { TelemetrySystem } from '../telemetry/TelemetrySystem.ts';
 
@@ -47,7 +44,7 @@ export class WorkerAgent extends BaseAgent {
                 }
 
                 // Peer Review Consultation
-                const critics = globalRegistry.findAgentsByRole('CRITIC');
+                const critics = this.runtime.agentRegistry.findAgentsByRole('CRITIC');
                 let critique: string;
 
                 if (critics.length > 0) {
@@ -123,7 +120,7 @@ Refined Strategy: Before giving the final answer, internalize the feedback. Ensu
         }
 
         // Record genealogical lineage
-        globalGenealogy.recordLineage(this.card.id, taskStr, finalAnswer, []);
+        this.runtime.genealogy.recordLineage(this.card.id, taskStr, finalAnswer, []);
 
         return finalAnswer;
     }

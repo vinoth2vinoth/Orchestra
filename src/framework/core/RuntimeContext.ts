@@ -10,6 +10,8 @@ import { EventStore, globalEventStore } from './EventStore.ts';
 import { WorkflowCheckpointer, globalCheckpointer } from '../orchestration/Checkpointer.ts';
 import { StateStore, globalStateStore } from '../orchestration/StateStore.ts';
 import { EscalationManager, globalEscalationManager } from '../governance/EscalationManager.ts';
+import { GenealogyTracker, globalGenealogy } from '../governance/GenealogyTracker.ts';
+import { ToolRegistry, globalToolRegistry } from '../tools/ToolRegistry.ts';
 
 export interface RuntimeServices {
     tenantId: string;
@@ -25,6 +27,8 @@ export interface RuntimeServices {
     checkpointer: WorkflowCheckpointer;
     stateStore: StateStore;
     escalationManager: EscalationManager;
+    genealogy: GenealogyTracker;
+    toolRegistry: ToolRegistry;
 }
 
 export type RuntimeContextOptions = Partial<RuntimeServices> & {
@@ -32,6 +36,23 @@ export type RuntimeContextOptions = Partial<RuntimeServices> & {
 };
 
 export function createRuntimeContext(options: RuntimeContextOptions = {}): RuntimeServices {
+    const eventStore = options.eventStore || globalEventStore;
+    const toolRegistry = options.toolRegistry || globalToolRegistry;
+    const auditLog = options.auditLog || globalAuditLog;
+    const escalationManager = options.escalationManager || (
+        options.eventStore || options.auditLog
+            ? new EscalationManager(eventStore, auditLog)
+            : globalEscalationManager
+    );
+    const genealogy = options.genealogy || (
+        options.eventStore ? new GenealogyTracker(eventStore) : globalGenealogy
+    );
+    const agentRegistry = options.agentRegistry || (
+        options.eventStore || options.toolRegistry
+            ? new AgentRegistry({ eventStore, toolRegistry })
+            : globalRegistry
+    );
+
     return {
         tenantId: options.tenantId || 'GLOBAL',
         stateAdapter: options.stateAdapter || globalStateAdapter,
@@ -40,12 +61,14 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
         queueBroker: options.queueBroker || globalQueueBroker,
         workerPool: options.workerPool || globalWorkerPool,
         policyEngine: options.policyEngine || globalPolicyEngine,
-        auditLog: options.auditLog || globalAuditLog,
-        agentRegistry: options.agentRegistry || globalRegistry,
-        eventStore: options.eventStore || globalEventStore,
+        auditLog,
+        agentRegistry,
+        eventStore,
         checkpointer: options.checkpointer || globalCheckpointer,
         stateStore: options.stateStore || globalStateStore,
-        escalationManager: options.escalationManager || globalEscalationManager
+        escalationManager,
+        genealogy,
+        toolRegistry
     };
 }
 

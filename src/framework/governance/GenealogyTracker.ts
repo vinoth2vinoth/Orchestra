@@ -1,4 +1,5 @@
 import { globalEventStore } from '../core/EventStore.ts';
+import type { EventStore } from '../core/EventStore.ts';
 
 export interface ProvenanceNode {
     id: string;
@@ -17,6 +18,8 @@ export interface ProvenanceNode {
 export class GenealogyTracker {
     private graph: Map<string, ProvenanceNode> = new Map();
 
+    constructor(private eventStore: EventStore = globalEventStore) {}
+
     public recordLineage(agentId: string, input: string, output: string, parentIds: string[] = []): string {
         const id = crypto.randomUUID();
         const outputHash = this.hashString(output);
@@ -32,7 +35,7 @@ export class GenealogyTracker {
         
         this.graph.set(id, node);
 
-        globalEventStore.append({
+        this.eventStore.append({
             type: 'MEMORY_STORED', // Loosely using this as a lineage event
             sourceAgentId: agentId,
             threadId: 'SYSTEM',
