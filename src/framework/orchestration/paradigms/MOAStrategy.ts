@@ -1,6 +1,5 @@
 import { BaseAgent } from '../../agents/BaseAgent.ts';
 import { ParadigmStrategy, ParadigmContext } from './ParadigmStrategy.ts';
-import { globalCheckpointer } from '../Checkpointer.ts';
 
 /**
  * MOA Paradigm: Parallel experts generate outputs, manager synthesizes.
@@ -10,7 +9,7 @@ export class MOAStrategy extends ParadigmStrategy {
         const layer1Agents = agents.filter(a => a.card.role !== 'MANAGER');
         if (layer1Agents.length === 0) throw new Error("MOA requires at least one non-MANAGER agent for Layer 1");
 
-        const checkpoint = await globalCheckpointer.getLatestCheckpoint(context.threadId);
+        const checkpoint = await context.checkpointer.getLatestCheckpoint(context.threadId);
         let layer1Results: any[] = [];
         if (checkpoint && checkpoint.stepId === 'moa_layer1_complete') {
             layer1Results = checkpoint.state.layer1Results;
@@ -27,7 +26,7 @@ export class MOAStrategy extends ParadigmStrategy {
             });
 
             layer1Results = await Promise.all(layer1Promises);
-            await globalCheckpointer.saveCheckpoint(context.threadId, 'moa_layer1_complete', { layer1Results, blackboard: context.blackboard });
+            await context.checkpointer.saveCheckpoint(context.threadId, 'moa_layer1_complete', { layer1Results, blackboard: context.blackboard });
         }
 
         const manager = agents.find(a => a.card.role === 'MANAGER') || agents[0];

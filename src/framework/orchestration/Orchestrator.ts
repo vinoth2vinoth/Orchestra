@@ -1,11 +1,7 @@
 import { BaseAgent } from '../agents/BaseAgent.ts';
 import { AgentFrameworkError, ConfigurationError } from '../core/ErrorHandler.ts';
-import { globalEventStore } from '../core/EventStore.ts';
 import { WorkflowSuspendedError } from './WorkflowSuspendedError.ts';
-import { globalStateStore } from './StateStore.ts';
-import { globalEscalationManager } from '../governance/EscalationManager.ts';
 import { ProviderRegistry } from '../llm/ProviderRegistry.ts';
-import { globalCheckpointer } from './Checkpointer.ts';
 import { TelemetrySystem } from '../telemetry/TelemetrySystem.ts';
 import { Sanitizer } from '../security/Sanitizer.ts';
 import { RuntimeContextOptions, RuntimeServices, createRuntimeContext } from '../core/RuntimeContext.ts';
@@ -124,7 +120,7 @@ export class Orchestrator {
 
     public async executeWorkflow(task: any, config: WorkflowConfig, threadId: string): Promise<any> {
         const workflowRuntime = config.runtime ? createRuntimeContext({ ...this.runtime, ...config.runtime }) : this.runtime;
-        globalEventStore.append({
+        workflowRuntime.eventStore.append({
             type: 'LLM_GENERATION_STARTED', // Loosely representing workflow start
             sourceAgentId: 'ORCHESTRATOR',
             threadId,
@@ -155,6 +151,8 @@ export class Orchestrator {
                         threadId,
                         blackboard: config.blackboard,
                         executeAgentTask: (agent, task, tid, bb, ps) => this.executeAgentTask(agent, task, tid, config.paradigm, bb, ps || workflowSpan, config.enableLearning === true, workflowRuntime),
+                        checkpointer: workflowRuntime.checkpointer,
+                        eventStore: workflowRuntime.eventStore,
                         parentSpan: workflowSpan
                     }, config);
                 } else {
@@ -172,7 +170,7 @@ export class Orchestrator {
                         task,
                         config: { paradigm: config.paradigm }, 
                         blackboard: config.blackboard,
-                        history: globalEventStore.getLogs().filter(e => e.threadId === threadId),
+                        history: workflowRuntime.eventStore.getLogs().filter(e => e.threadId === threadId),
                         agentDefinitions: config.agents.map(a => ({
                             name: a.card.name,
                             role: a.card.role,
@@ -183,11 +181,11 @@ export class Orchestrator {
                             urgency: a.card.urgency
                         }))
                     };
-                    await globalStateStore.saveState(error.approvalId, stateToSave);
+                    await workflowRuntime.stateStore.saveState(error.approvalId, stateToSave);
                     
                     await workflowRuntime.pluginRegistry.emitOnWorkflowSleep(threadId, stateToSave);
                     
-                    globalEventStore.append({
+                    workflowRuntime.eventStore.append({
                         type: 'WORKFLOW_COMPLETED', // Or suspended
                         sourceAgentId: 'ORCHESTRATOR',
                         threadId,
@@ -211,7 +209,7 @@ export class Orchestrator {
                         error
                     );
                     
-                    globalEventStore.append({
+                    workflowRuntime.eventStore.append({
                         type: 'SYSTEM_HOOK',
                         sourceAgentId: 'ORCHESTRATOR',
                         threadId,
@@ -232,7 +230,7 @@ export class Orchestrator {
                     throw finalErr;
                 }
 
-                globalEventStore.append({
+                workflowRuntime.eventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: 'ORCHESTRATOR',
                     threadId,
@@ -246,7 +244,7 @@ export class Orchestrator {
 
         TelemetrySystem.endSpan(workflowSpanId);
 
-        globalEventStore.append({
+        workflowRuntime.eventStore.append({
             type: 'WORKFLOW_COMPLETED',
             sourceAgentId: 'ORCHESTRATOR',
             threadId,
@@ -254,7 +252,7 @@ export class Orchestrator {
         });
 
         // Clear checkpoint file after full successful completion
-        await globalCheckpointer.clearCheckpoint(threadId);
+        await workflowRuntime.checkpointer.clearCheckpoint(threadId);
 
         // Trigger Autonomous Self-Reflection (Dimension 07)
         // This is non-blocking and queued to avoid LLM burst saturation
@@ -269,7 +267,7 @@ export class Orchestrator {
      * Autonomous Self-Reflection: Analyzes a completed thread to distill meta-level wisdom.
      */
     private async runSelfReflection(threadId: string, agents: BaseAgent[]) {
-        const events = globalEventStore.getEventsByThread(threadId);
+        const events = this.runtime.eventStore.getEventsByThread(threadId);
         if (events.length < 5) return; // Not enough context to reflect deeply
 
         try {
@@ -314,7 +312,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                     agent.mutate(rule);
                 }
 
-                globalEventStore.append({
+                this.runtime.eventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: 'REFLECTION_ENGINE',
                     threadId,
@@ -330,21 +328,21 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
      * Resumes a suspended workflow when a webhook or approval provides the resolution.
      */
     public async resumeWorkflow(approvalId: string, resolution: 'APPROVED' | 'REJECTED' | 'MODIFIED', feedback?: string, agents?: BaseAgent[]): Promise<any> {
-        const state = await globalStateStore.getState(approvalId);
+        const state = await this.runtime.stateStore.getState(approvalId);
         if (!state) {
             throw new Error(`Cannot resume: No suspended workflow found for approval ID ${approvalId}`);
         }
 
         if (resolution === 'REJECTED') {
-            await globalStateStore.deleteState(approvalId);
+            await this.runtime.stateStore.deleteState(approvalId);
             return { status: 'TERMINATED', reason: 'Rejected by human' };
         }
 
-        await globalEscalationManager.resolveApproval(approvalId, resolution, feedback);
-        await globalStateStore.deleteState(approvalId);
+        await this.runtime.escalationManager.resolveApproval(approvalId, resolution, feedback);
+        await this.runtime.stateStore.deleteState(approvalId);
         await this.runtime.pluginRegistry.emitOnWorkflowResume(state.threadId, state);
         
-        globalEventStore.append({
+        this.runtime.eventStore.append({
             type: 'SYSTEM_HOOK',
             sourceAgentId: 'ORCHESTRATOR',
             threadId: state.threadId,
@@ -375,7 +373,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
         const chainCount = chain.filter(c => c === agent.card.id).length;
         if (chainCount > 100) {
             const deadlockError = `Conversational Deadlock Detected: Agent ${agent.card.id} is deeply nested or overloaded.`;
-            globalEventStore.append({ type: 'ERROR_THROWN', sourceAgentId: 'ORCHESTRATOR', threadId, payload: { error: deadlockError } });
+            runtime.eventStore.append({ type: 'ERROR_THROWN', sourceAgentId: 'ORCHESTRATOR', threadId, payload: { error: deadlockError } });
             throw new Error(deadlockError);
         }
         
@@ -389,7 +387,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
         
         try {
             if (useDistributedQueue) {
-                globalEventStore.append({
+                runtime.eventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: 'ORCHESTRATOR',
                     threadId,
@@ -412,7 +410,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                 const result: any = await Promise.race([publishPromise, timeoutPromise]);
 
                 if (result.status === 'error') {
-                    globalEventStore.append({
+                    runtime.eventStore.append({
                         type: 'ERROR_THROWN',
                         sourceAgentId: 'ORCHESTRATOR',
                         threadId,
@@ -500,7 +498,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                 result = await runtime.pluginRegistry.emitAfterAgentExecute(agent.card.id, currentTask, result, threadId);
                 
                 const duration = TelemetrySystem.endSpan(spanId);
-                globalEventStore.append({
+                runtime.eventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: agent.card.id,
                     threadId,
@@ -508,12 +506,12 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                 });
 
                 if (enableLearning) {
-                    await this.consolidateAgentLearning(agent, currentTask, result, null, threadId);
+                    await this.consolidateAgentLearning(agent, currentTask, result, null, threadId, runtime);
                 }
                 return result;
             } catch (error: any) {
                 const duration = TelemetrySystem.endSpan(spanId, error);
-                globalEventStore.append({
+                runtime.eventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: agent.card.id,
                     threadId,
@@ -525,7 +523,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                     return recovery.result;
                 }
                 if (enableLearning) {
-                    await this.consolidateAgentLearning(agent, currentTask, null, error, threadId);
+                    await this.consolidateAgentLearning(agent, currentTask, null, error, threadId, runtime);
                 }
                 throw error;
             }
@@ -539,7 +537,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
         }
     }
 
-    private async consolidateAgentLearning(agent: BaseAgent, task: any, result: any, error: any, threadId: string) {
+    private async consolidateAgentLearning(agent: BaseAgent, task: any, result: any, error: any, threadId: string, runtime: RuntimeServices = this.runtime) {
         try {
             const systemPrompt = "You are a cognitive consolidator. Extract actionable procedural rules from task outcomes.";
             const messages = [{ 
@@ -548,14 +546,14 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
             }];
             
             const policyConfig = { ...agent.llmConfig, tier: 'POLICY' as const };
-            const response = await this.runtime.circuitBreakers.execute(`learning:${agent.card.id}:${agent.llmConfig.modelName || 'default'}`, async () => {
+            const response = await runtime.circuitBreakers.execute(`learning:${agent.card.id}:${agent.llmConfig.modelName || 'default'}`, async () => {
                 return await ProviderRegistry.generate(policyConfig, systemPrompt, messages);
             }, async () => ({ text: 'NO_LEARNING', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } }));
             
             if (response.text && !response.text.includes('NO_LEARNING')) {
                 await agent.memory.addProceduralMemory(response.text, 'AGENT_LEARNING');
                 
-                globalEventStore.append({
+                runtime.eventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: 'ORCHESTRATOR',
                     threadId,

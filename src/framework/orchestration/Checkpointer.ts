@@ -8,12 +8,18 @@ export interface CheckpointData {
     timestamp: number;
 }
 
+export interface WorkflowCheckpointer {
+    saveCheckpoint(threadId: string, stepId: string, state: any): Promise<void>;
+    getLatestCheckpoint(threadId: string): Promise<CheckpointData | null>;
+    clearCheckpoint(threadId: string): Promise<void>;
+}
+
 /**
  * LangGraph/Temporal-style state checkpointer.
  * Serializes the Orchestrator's internal state to a DB (Virtual File System) at each step.
  * Includes AES-256-GCM hardware-accelerated encryption for data-at-rest protection.
  */
-export class StateCheckpointer {
+export class StateCheckpointer implements WorkflowCheckpointer {
     private readonly ALGORITHM = 'aes-256-gcm';
     private readonly KEY_LENGTH = 32;
     private readonly IV_LENGTH = 12;

@@ -1,6 +1,5 @@
 import { BaseAgent } from '../../agents/BaseAgent.ts';
 import { ParadigmStrategy, ParadigmContext } from './ParadigmStrategy.ts';
-import { globalCheckpointer } from '../Checkpointer.ts';
 import { WorkflowConfig } from '../Orchestrator.ts';
 import { ConfigurationError } from '../../core/ErrorHandler.ts';
 
@@ -25,7 +24,7 @@ export class MapReduceStrategy extends ParadigmStrategy {
         const subtasks = dag.subtasks;
         const taskResults = new Map<string, any>();
         
-        const checkpoint = await globalCheckpointer.getLatestCheckpoint(context.threadId);
+        const checkpoint = await context.checkpointer.getLatestCheckpoint(context.threadId);
         if (checkpoint && checkpoint.stepId === 'map_reduce_map_complete') {
             Object.entries(checkpoint.state.taskResults).forEach(([id, res]) => taskResults.set(id, res));
             console.log(`[Checkpointer] Resuming MAP_REDUCE after Map phase.`);
@@ -55,7 +54,7 @@ export class MapReduceStrategy extends ParadigmStrategy {
                 }
                 pending = pending.filter(st => !completed.find(c => c.id === st.id));
             }
-            await globalCheckpointer.saveCheckpoint(context.threadId, 'map_reduce_map_complete', { 
+            await context.checkpointer.saveCheckpoint(context.threadId, 'map_reduce_map_complete', {
                 taskResults: Object.fromEntries(taskResults), 
                 blackboard: context.blackboard 
             });

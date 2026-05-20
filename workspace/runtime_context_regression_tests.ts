@@ -3,6 +3,9 @@ import { Orchestrator, WorkflowConfig } from '../src/framework/orchestration/Orc
 import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
 import { PluginRegistry } from '../src/framework/core/PluginRegistry.ts';
 import { getExecutionContext } from '../src/framework/core/ExecutionContext.ts';
+import { StateStore, globalStateStore } from '../src/framework/orchestration/StateStore.ts';
+import { WorkflowSuspendedError } from '../src/framework/orchestration/WorkflowSuspendedError.ts';
+import type { CheckpointData } from '../src/framework/orchestration/Checkpointer.ts';
 
 class EchoManagerAgent extends BaseAgent {
   async execute(task: any, threadId: string): Promise<any> {
@@ -22,6 +25,72 @@ class BlackboardEchoAgent extends BaseAgent {
       marker: task.blackboard?.marker,
       originalTaskMutated: Object.prototype.hasOwnProperty.call(task, 'blackboard')
     };
+  }
+}
+
+class RecordingGraphAgent extends BaseAgent {
+  public calls: any[] = [];
+
+  constructor(id: string, private readonly answer: string) {
+    super(
+      id,
+      `Records graph calls for ${id}.`,
+      'WORKER',
+      new MemoryMesh(),
+      { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+      [],
+      undefined,
+      undefined,
+      undefined,
+      id
+    );
+  }
+
+  async execute(task: any): Promise<any> {
+    this.calls.push(task);
+    return this.answer;
+  }
+}
+
+class SuspendingAgent extends BaseAgent {
+  constructor(id: string, private readonly approvalId: string) {
+    super(
+      id,
+      `Suspends workflow for ${id}.`,
+      'MANAGER',
+      new MemoryMesh(),
+      { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+      [],
+      undefined,
+      undefined,
+      undefined,
+      id
+    );
+  }
+
+  async execute(): Promise<any> {
+    throw new WorkflowSuspendedError(this.approvalId, { reason: 'runtime-state-store-test' });
+  }
+}
+
+class InMemoryCheckpointer {
+  private checkpoints = new Map<string, CheckpointData>();
+
+  async saveCheckpoint(threadId: string, stepId: string, state: any): Promise<void> {
+    this.checkpoints.set(threadId, {
+      threadId,
+      stepId,
+      state: JSON.parse(JSON.stringify(state)),
+      timestamp: Date.now()
+    });
+  }
+
+  async getLatestCheckpoint(threadId: string): Promise<CheckpointData | null> {
+    return this.checkpoints.get(threadId) || null;
+  }
+
+  async clearCheckpoint(threadId: string): Promise<void> {
+    this.checkpoints.delete(threadId);
   }
 }
 
@@ -64,6 +133,91 @@ async function testRuntimePluginAndTenantScope() {
   }
   if (result.tenantId !== 'tenant-runtime-test') {
     throw new Error(`Execution context tenant was not scoped: ${JSON.stringify(result)}`);
+  }
+}
+
+async function testRuntimeCheckpointerScope() {
+  const threadId = `RUNTIME_CHECKPOINT_SHARED_${Date.now()}`;
+  const scopedCheckpointerA = new InMemoryCheckpointer();
+  const scopedCheckpointerB = new InMemoryCheckpointer();
+
+  await scopedCheckpointerA.saveCheckpoint(threadId, 'graph_step_graph-a', {
+    currentState: 'A_DONE_FROM_SCOPED_CHECKPOINT',
+    executed: ['graph-a'],
+    results: { 'graph-a': 'A_DONE_FROM_SCOPED_CHECKPOINT' },
+    blackboard: { fromCheckpoint: true }
+  });
+
+  const agentAForRuntimeA = new RecordingGraphAgent('graph-a', 'A_SHOULD_NOT_RUN');
+  const agentBForRuntimeA = new RecordingGraphAgent('graph-b', 'B_DONE_RUNTIME_A');
+  const resultA = await new Orchestrator({ checkpointer: scopedCheckpointerA as any }).executeWorkflow(
+    'start',
+    {
+      paradigm: 'GRAPH',
+      agents: [agentAForRuntimeA, agentBForRuntimeA],
+      edges: [{ from: 'graph-a', to: 'graph-b' }],
+      maxRetries: 0,
+      blackboard: {}
+    } as WorkflowConfig,
+    threadId
+  );
+
+  if (agentAForRuntimeA.calls.length !== 0) {
+    throw new Error(`Runtime A should have resumed from scoped checkpoint without rerunning graph-a, got ${agentAForRuntimeA.calls.length}`);
+  }
+  if (resultA.results?.['graph-a'] !== 'A_DONE_FROM_SCOPED_CHECKPOINT') {
+    throw new Error(`Runtime A did not use scoped checkpoint: ${JSON.stringify(resultA)}`);
+  }
+
+  const agentAForRuntimeB = new RecordingGraphAgent('graph-a', 'A_DONE_RUNTIME_B');
+  const agentBForRuntimeB = new RecordingGraphAgent('graph-b', 'B_DONE_RUNTIME_B');
+  const resultB = await new Orchestrator({ checkpointer: scopedCheckpointerB as any }).executeWorkflow(
+    'start',
+    {
+      paradigm: 'GRAPH',
+      agents: [agentAForRuntimeB, agentBForRuntimeB],
+      edges: [{ from: 'graph-a', to: 'graph-b' }],
+      maxRetries: 0,
+      blackboard: {}
+    } as WorkflowConfig,
+    threadId
+  );
+
+  if (agentAForRuntimeB.calls.length !== 1) {
+    throw new Error(`Runtime B should not see Runtime A checkpoint, got ${agentAForRuntimeB.calls.length} graph-a calls`);
+  }
+  if (resultB.results?.['graph-a'] !== 'A_DONE_RUNTIME_B') {
+    throw new Error(`Runtime B used the wrong checkpoint state: ${JSON.stringify(resultB)}`);
+  }
+}
+
+async function testRuntimeStateStoreScopeForSuspendedWorkflow() {
+  const approvalId = `approval-runtime-${Date.now()}`;
+  const scopedStore = new StateStore();
+  await globalStateStore.deleteState(approvalId);
+
+  const result = await new Orchestrator({ stateStore: scopedStore as any }).executeWorkflow(
+    'needs approval',
+    {
+      paradigm: 'HIERARCHICAL',
+      agents: [new SuspendingAgent('scoped-suspender', approvalId)],
+      maxRetries: 0
+    },
+    `RUNTIME_STATE_STORE_${Date.now()}`
+  );
+
+  if (result.status !== 'SUSPENDED' || result.approvalId !== approvalId) {
+    throw new Error(`Expected suspended workflow, got ${JSON.stringify(result)}`);
+  }
+
+  const scopedState = await scopedStore.getState(approvalId);
+  if (!scopedState) {
+    throw new Error('Scoped runtime state store did not receive suspended workflow state');
+  }
+
+  const globalState = await globalStateStore.getState(approvalId);
+  if (globalState) {
+    throw new Error(`Suspended workflow leaked into global state store: ${JSON.stringify(globalState)}`);
   }
 }
 
@@ -138,6 +292,8 @@ async function testConcurrentWorkflowsDoNotMutateSharedTaskObject() {
 
 const tests = [
   ['runtime plugin and tenant scope', testRuntimePluginAndTenantScope],
+  ['runtime checkpointer scope', testRuntimeCheckpointerScope],
+  ['runtime state store scope for suspended workflow', testRuntimeStateStoreScopeForSuspendedWorkflow],
   ['concurrent workflows do not mutate shared task object', testConcurrentWorkflowsDoNotMutateSharedTaskObject]
 ] as const;
 

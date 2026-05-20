@@ -7,6 +7,9 @@ import { AuditLog, globalAuditLog } from '../governance/AuditLog.ts';
 import { StateAdapter, globalStateAdapter } from './StateAdapter.ts';
 import { AgentRegistry, globalRegistry } from '../agents/AgentRegistry.ts';
 import { EventStore, globalEventStore } from './EventStore.ts';
+import { WorkflowCheckpointer, globalCheckpointer } from '../orchestration/Checkpointer.ts';
+import { StateStore, globalStateStore } from '../orchestration/StateStore.ts';
+import { EscalationManager, globalEscalationManager } from '../governance/EscalationManager.ts';
 
 export interface RuntimeServices {
     tenantId: string;
@@ -19,6 +22,9 @@ export interface RuntimeServices {
     auditLog: AuditLog;
     agentRegistry: AgentRegistry;
     eventStore: EventStore;
+    checkpointer: WorkflowCheckpointer;
+    stateStore: StateStore;
+    escalationManager: EscalationManager;
 }
 
 export type RuntimeContextOptions = Partial<RuntimeServices> & {
@@ -36,7 +42,10 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
         policyEngine: options.policyEngine || globalPolicyEngine,
         auditLog: options.auditLog || globalAuditLog,
         agentRegistry: options.agentRegistry || globalRegistry,
-        eventStore: options.eventStore || globalEventStore
+        eventStore: options.eventStore || globalEventStore,
+        checkpointer: options.checkpointer || globalCheckpointer,
+        stateStore: options.stateStore || globalStateStore,
+        escalationManager: options.escalationManager || globalEscalationManager
     };
 }
 

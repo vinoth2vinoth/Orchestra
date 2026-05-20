@@ -1,7 +1,5 @@
 import { BaseAgent } from '../../agents/BaseAgent.ts';
 import { ParadigmStrategy, ParadigmContext } from './ParadigmStrategy.ts';
-import { globalCheckpointer } from '../Checkpointer.ts';
-import { globalEventStore } from '../../core/EventStore.ts';
 
 /**
  * Decentralized Swarm Paradigm: Agents autonomously collaborate via the blackboard.
@@ -13,7 +11,7 @@ export class DecentralizedSwarmStrategy extends ParadigmStrategy {
         let iterations = 0;
         const maxIterations = 5; // Default from Orchestrator
         
-        const checkpoint = await globalCheckpointer.getLatestCheckpoint(context.threadId);
+        const checkpoint = await context.checkpointer.getLatestCheckpoint(context.threadId);
         if (checkpoint && checkpoint.stepId && checkpoint.stepId.startsWith('swarm_step_')) {
             currentStatus = checkpoint.state.currentStatus;
             iterations = checkpoint.state.iterations;
@@ -55,13 +53,13 @@ Agent ${agent.card.name}, evaluate the current state.
                 }
             }
             
-            await globalCheckpointer.saveCheckpoint(context.threadId, `swarm_step_${iterations}`, {
+            await context.checkpointer.saveCheckpoint(context.threadId, `swarm_step_${iterations}`, {
                 currentStatus,
                 iterations,
                 blackboard: JSON.parse(JSON.stringify(blackboard))
             });
             
-            globalEventStore.append({
+            context.eventStore.append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'ORCHESTRATOR',
                 threadId: context.threadId,

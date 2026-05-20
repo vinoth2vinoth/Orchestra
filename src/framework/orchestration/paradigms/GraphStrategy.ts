@@ -1,6 +1,5 @@
 import { BaseAgent } from '../../agents/BaseAgent.ts';
 import { ParadigmStrategy, ParadigmContext } from './ParadigmStrategy.ts';
-import { globalCheckpointer } from '../Checkpointer.ts';
 import { WorkflowConfig } from '../Orchestrator.ts';
 import { ConfigurationError } from '../../core/ErrorHandler.ts';
 
@@ -25,7 +24,7 @@ export class GraphStrategy extends ParadigmStrategy {
         let executed = new Set<string>();
         let results = new Map<string, any>();
         
-        const checkpoint = await globalCheckpointer.getLatestCheckpoint(context.threadId);
+        const checkpoint = await context.checkpointer.getLatestCheckpoint(context.threadId);
         if (checkpoint && checkpoint.stepId && checkpoint.stepId.startsWith('graph_step_')) {
             currentState = checkpoint.state.currentState;
             checkpoint.state.executed.forEach((ex: string) => executed.add(ex));
@@ -68,7 +67,7 @@ export class GraphStrategy extends ParadigmStrategy {
                 executed.add(agentId);
                 pending.delete(agentId);
             
-                await globalCheckpointer.saveCheckpoint(context.threadId, `graph_step_${agentId}`, {
+                await context.checkpointer.saveCheckpoint(context.threadId, `graph_step_${agentId}`, {
                     currentState,
                     executed: Array.from(executed),
                     results: Object.fromEntries(results),

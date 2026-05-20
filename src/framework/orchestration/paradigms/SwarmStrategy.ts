@@ -1,6 +1,5 @@
 import { BaseAgent } from '../../agents/BaseAgent.ts';
 import { ParadigmStrategy, ParadigmContext } from './ParadigmStrategy.ts';
-import { globalCheckpointer } from '../Checkpointer.ts';
 
 /**
  * Swarm Paradigm: Multiple workers collaborate on a task, synthesized by a manager.
@@ -10,7 +9,7 @@ export class SwarmStrategy extends ParadigmStrategy {
         const workers = agents.filter(a => a.card.role === 'WORKER');
         if (workers.length === 0) throw new Error("SWARM requires at least one WORKER agent");
 
-        const checkpoint = await globalCheckpointer.getLatestCheckpoint(context.threadId);
+        const checkpoint = await context.checkpointer.getLatestCheckpoint(context.threadId);
         let results: any[] = [];
         if (checkpoint && checkpoint.stepId === 'swarm_fanout_complete') {
             results = checkpoint.state.results;
@@ -25,7 +24,7 @@ export class SwarmStrategy extends ParadigmStrategy {
             })));
 
             results = await Promise.all(promises);
-            await globalCheckpointer.saveCheckpoint(context.threadId, 'swarm_fanout_complete', { results, blackboard: context.blackboard });
+            await context.checkpointer.saveCheckpoint(context.threadId, 'swarm_fanout_complete', { results, blackboard: context.blackboard });
         }
         
         const manager = agents.find(a => a.card.role === 'MANAGER');

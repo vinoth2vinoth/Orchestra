@@ -1,6 +1,5 @@
 import { BaseAgent } from '../../agents/BaseAgent.ts';
 import { ParadigmStrategy, ParadigmContext } from './ParadigmStrategy.ts';
-import { globalCheckpointer } from '../Checkpointer.ts';
 import { WorkflowConfig } from '../Orchestrator.ts';
 
 /**
@@ -18,7 +17,7 @@ export class EventDrivenStrategy extends ParadigmStrategy {
         const iterations = config.maxIterations || 5;
         let currentIteration = 0;
 
-        const checkpoint = await globalCheckpointer.getLatestCheckpoint(context.threadId);
+        const checkpoint = await context.checkpointer.getLatestCheckpoint(context.threadId);
         if (checkpoint && checkpoint.stepId && checkpoint.stepId.startsWith('event_step_')) {
             resultState = checkpoint.state.resultState;
             eventQueue = checkpoint.state.eventQueue;
@@ -49,7 +48,7 @@ export class EventDrivenStrategy extends ParadigmStrategy {
                 }
             }
 
-            await globalCheckpointer.saveCheckpoint(context.threadId, `event_step_${i}`, {
+            await context.checkpointer.saveCheckpoint(context.threadId, `event_step_${i}`, {
                 resultState,
                 eventQueue,
                 currentIteration: i + 1,
