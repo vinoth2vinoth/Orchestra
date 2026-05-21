@@ -1,4 +1,6 @@
 import { KeyValueStateAdapter } from '../src/framework/core/KeyValueStateAdapter.ts';
+import { EventStore } from '../src/framework/core/EventStore.ts';
+import { RedisMessageBus } from '../src/framework/core/RedisMessageBus.ts';
 import { globalStateAdapter } from '../src/framework/core/StateAdapter.ts';
 import { QueueBroker, TaskPayload } from '../src/framework/orchestration/QueueBroker.ts';
 
@@ -140,9 +142,66 @@ async function testQueueBrokerUsesKeyValueGlobalState() {
   }
 }
 
+async function testEventStoreUsesRedisCompatibleMessageBusAcrossNodes() {
+  const stateUrl = getStateUrl()!;
+  const historyKey = `state-backend-events:${Date.now()}:${crypto.randomUUID()}`;
+  const topic = `state-backend-topic:${Date.now()}:${crypto.randomUUID()}`;
+  const threadId = `STATE_BACKEND_EVENT_${Date.now()}`;
+  const marker = `marker-${crypto.randomUUID()}`;
+  const adapterA = new KeyValueStateAdapter(stateUrl);
+  const adapterB = new KeyValueStateAdapter(stateUrl);
+  const busA = new RedisMessageBus(stateUrl);
+  const busB = new RedisMessageBus(stateUrl);
+  const storeA = new EventStore({ stateAdapter: adapterA, messageBus: busA, historyKey, topic });
+  const storeB = new EventStore({ stateAdapter: adapterB, messageBus: busB, historyKey, topic });
+
+  try {
+    await storeA.ready;
+    await storeB.ready;
+    await wait(100);
+
+    storeA.append({
+      type: 'SYSTEM_HOOK',
+      sourceAgentId: 'state-backend-event-producer',
+      threadId,
+      payload: { marker }
+    });
+
+    await withTimeout((async () => {
+      while (!storeB.getEventsByThread(threadId).some(event => event.payload?.marker === marker)) {
+        await wait(25);
+      }
+    })(), 3000);
+
+    const freshBus = new RedisMessageBus(stateUrl);
+    const freshStore = await EventStore.create({
+      stateAdapter: adapterB,
+      messageBus: freshBus,
+      historyKey,
+      topic: `${topic}:fresh`
+    });
+    try {
+      const reloaded = freshStore.getEventsByThread(threadId);
+      assert(reloaded.some(event => event.payload?.marker === marker), `Fresh EventStore did not reload persisted event: ${JSON.stringify(reloaded)}`);
+    } finally {
+      freshStore.dispose();
+      freshBus.disconnect();
+    }
+  } finally {
+    storeA.dispose();
+    storeB.dispose();
+    await adapterA.delete(historyKey);
+    adapterA.disconnect();
+    adapterB.disconnect();
+    busA.disconnect();
+    busB.disconnect();
+  }
+}
+
 const tests = [
   ['key-value state adapter parity', testKeyValueStateAdapterParity],
-  ['queue broker uses key-value global state', testQueueBrokerUsesKeyValueGlobalState]
+  ['queue broker uses key-value global state', testQueueBrokerUsesKeyValueGlobalState],
+  ['event store uses Redis-compatible message bus across nodes', testEventStoreUsesRedisCompatibleMessageBusAcrossNodes]
 ] as const;
 
 if (!getStateUrl()) {

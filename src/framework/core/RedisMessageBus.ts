@@ -49,8 +49,15 @@ export class RedisMessageBus implements IMessageBus {
             const list = this.handlers.get(topic) || [];
             this.handlers.set(topic, list.filter(h => h !== handler));
             if (this.handlers.get(topic)?.length === 0) {
-                this.sub.unsubscribe(topic);
+                this.sub.unsubscribe(topic).catch(err => {
+                    console.error(`Redis-compatible message bus failed to unsubscribe from ${topic}:`, err.message);
+                });
             }
         };
+    }
+
+    public disconnect(): void {
+        this.pub.disconnect();
+        this.sub.disconnect();
     }
 }

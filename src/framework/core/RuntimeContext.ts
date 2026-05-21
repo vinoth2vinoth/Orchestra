@@ -7,6 +7,7 @@ import { AuditLog, globalAuditLog } from '../governance/AuditLog.ts';
 import { StateAdapter, globalStateAdapter } from './StateAdapter.ts';
 import { AgentRegistry, globalRegistry } from '../agents/AgentRegistry.ts';
 import { EventStore, globalEventStore } from './EventStore.ts';
+import { createMessageBus } from './MessageBusFactory.ts';
 import { WorkflowCheckpointer, globalCheckpointer } from '../orchestration/Checkpointer.ts';
 import { StateStore, globalStateStore } from '../orchestration/StateStore.ts';
 import { EscalationManager, globalEscalationManager } from '../governance/EscalationManager.ts';
@@ -42,10 +43,14 @@ function scopedKey(base: string, tenantId: string): string {
 export function createRuntimeContext(options: RuntimeContextOptions = {}): RuntimeServices {
     const tenantId = options.tenantId || 'GLOBAL';
     const stateAdapter = options.stateAdapter || globalStateAdapter;
+    const messageBus = options.stateAdapter && (!options.eventStore || !options.queueBroker)
+        ? createMessageBus()
+        : undefined;
     const eventStore = options.eventStore || (
         options.stateAdapter
             ? new EventStore({
                 stateAdapter,
+                messageBus,
                 historyKey: scopedKey('framework_events', tenantId),
                 topic: scopedKey('FRAMEWORK_EVENTS', tenantId)
             })
@@ -98,6 +103,7 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
             options.stateAdapter
                 ? new QueueBroker({
                     stateAdapter,
+                    messageBus,
                     namespace: scopedKey('queue', tenantId)
                 })
                 : globalQueueBroker

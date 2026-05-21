@@ -34,7 +34,7 @@ Orchestra is still early-stage infrastructure. The current reliability model is 
 | Worker returns repeated failures | Supported | Task retries until `maxAttempts`, then moves to the dead-letter queue. |
 | Process restarts during graph workflow | Partially supported | Graph checkpoints can resume completed nodes; the caller must supply compatible agent definitions. |
 | Checkpoint file corruption | Supported when a snapshot exists | Storage mesh restores the last valid snapshot; otherwise checkpoint load returns `null`. |
-| Event bus fanout drop | Partially supported | Origin node appends locally and persists to state before bus fanout. Cross-node delivery still depends on the message bus backend. |
+| Event bus fanout drop | Supported with a distributed message bus | Origin node appends locally and persists to state before bus fanout. Cross-node live delivery is validated with the Redis-compatible message bus; local mode remains single-process. |
 | External tool side effect retried after crash | Requires application idempotency | Use deterministic idempotency keys at the tool boundary; the framework only deduplicates queue task IDs. |
 | Multi-region split brain | Planned | Requires a stronger distributed lock/consensus backend than the local development adapter. |
 
@@ -45,10 +45,11 @@ For production-like reliability, configure:
 ```env
 ORCHESTRA_STATE_ADAPTER=keyvalue
 ORCHESTRA_STATE_URL=redis://localhost:6379
+ORCHESTRA_MESSAGE_BUS=keyvalue
 ORCHESTRA_ENCRYPTION_KEY=replace-with-a-strong-secret
 ```
 
-The key-value adapter uses the Redis-compatible protocol and is tested with Valkey in CI. Application code should depend on `StateAdapter`, not a specific backend brand.
+The key-value adapter and distributed message bus use the Redis-compatible protocol and are tested with Valkey in CI. Application code should depend on `StateAdapter` and `IMessageBus`, not a specific backend brand.
 
 ## Idempotency Rules
 

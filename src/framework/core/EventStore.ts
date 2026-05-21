@@ -42,6 +42,9 @@ export class EventStore {
             } else {
                 this.unsubscribeFromBus = unsubscribe;
             }
+        }).catch(err => {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(`[EventStore] MESSAGE BUS WARNING: Failed to subscribe to ${this.topic}: ${message}`);
         });
         
         // Seed history from shared state. Callers that need restored history before
@@ -133,7 +136,18 @@ export class EventStore {
         this.internalAppend(fullEvent);
 
         // 3. Publish to distributed bus - duplicate local delivery is ignored by ID
-        this.messageBus.publish(this.topic, fullEvent);
+        this.messageBus.publish(this.topic, fullEvent).catch(err => {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(`[EventStore] MESSAGE BUS WARNING: Failed to publish event ${fullEvent.id} to ${this.topic}: ${message}`);
+            this.internalAppend({
+                type: 'ERROR_THROWN',
+                sourceAgentId: 'EVENT_STORE',
+                threadId: 'SYSTEM',
+                payload: { action: 'MESSAGE_BUS_PUBLISH_FAILURE', eventId: fullEvent.id, message },
+                id: crypto.randomUUID(),
+                timestamp: Date.now()
+            });
+        });
         
         return fullEvent;
     }

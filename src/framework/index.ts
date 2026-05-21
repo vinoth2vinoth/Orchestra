@@ -20,6 +20,9 @@ export type { StateAdapter } from './core/StateAdapter.ts';
 export { KeyValueStateAdapter } from './core/KeyValueStateAdapter.ts';
 export { LocalMessageBus } from './core/MessageBus.ts';
 export type { IMessageBus } from './core/MessageBus.ts';
+export { createMessageBus } from './core/MessageBusFactory.ts';
+export type { MessageBusKind } from './core/MessageBusFactory.ts';
+export { RedisMessageBus, RedisMessageBus as RedisCompatibleMessageBus } from './core/RedisMessageBus.ts';
 export { EventStore, globalEventStore } from './core/EventStore.ts';
 export type { EventStoreOptions } from './core/EventStore.ts';
 
