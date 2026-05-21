@@ -334,8 +334,22 @@ export class StorageMesh {
                 typeof content === 'string' ? Buffer.from(content) : content
             ]);
 
-            // 3. Authorized write
-            await this.writeFile(relativePath, newContent);
+            // 3. Authorized append. Avoid rewriting large append-only logs on every entry.
+            this.fileManifest.set(relativePath, {
+                versionId: crypto.randomUUID(),
+                hash: this.generateHash(newContent),
+                content: newContent,
+                timestamp: Date.now(),
+                isProtected: manifestEntry ? manifestEntry.isProtected : true
+            });
+
+            if (this.strategy === 'LOCAL') {
+                const dir = path.dirname(safePath);
+                if (!fs.existsSync(dir)) {
+                    fs.mkdirSync(dir, { recursive: true });
+                }
+                await fs.promises.appendFile(safePath, content);
+            }
         } finally {
             this.activeWrites.delete(relativePath);
         }

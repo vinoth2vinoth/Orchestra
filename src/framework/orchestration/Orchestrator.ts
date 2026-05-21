@@ -519,6 +519,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                             action: 'TASK_CACHE_HIT',
                             category: 'PERFORMANCE'
                         });
+                        await runtime.auditLog.log(threadId, agent.card.id, 'AGENT_EXECUTION_CACHE_HIT', `Agent ${agent.card.name} returned a cached response under paradigm ${paradigm}`);
                         return e.cachedResponse;
                     }
                     throw e;
@@ -555,6 +556,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                     threadId,
                     payload: { action: 'AGENT_EXECUTION_COMPLETED', duration, status: 'SUCCESS' }
                 });
+                await runtime.auditLog.log(threadId, agent.card.id, 'AGENT_EXECUTION_SUCCESS', `Agent ${agent.card.name} completed task execution under paradigm ${paradigm} in ${duration}ms`);
 
                 if (enableLearning) {
                     await this.consolidateAgentLearning(agent, currentTask, result, null, threadId, runtime);
@@ -568,6 +570,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                     threadId,
                     payload: { action: 'AGENT_EXECUTION_COMPLETED', duration, status: 'FAILED', error: error.message }
                 });
+                await runtime.auditLog.log(threadId, agent.card.id, 'AGENT_EXECUTION_FAILED', `Agent ${agent.card.name} failed task execution under paradigm ${paradigm} in ${duration}ms: ${error.message}`);
 
                 const recovery = await runtime.pluginRegistry.emitOnAgentFault(agent.card.id, error, currentTask, threadId);
                 if (recovery && recovery.recovered) {

@@ -18,17 +18,22 @@ export interface AuditEntry {
  */
 export class AuditLog {
     private static writeQueues: Map<string, Promise<void>> = new Map();
+    private static tailHashes: Map<string, string> = new Map();
+    private static initializedPaths: Set<string> = new Set();
     private lastHash: string = 'GENESIS';
-    private initialized = false;
     private readonly lockWaitMs = this.parsePositiveNumber(process.env.ORCHESTRA_AUDIT_LOCK_WAIT_MS, 30000);
+    private readonly reloadTailEachWrite = process.env.ORCHESTRA_AUDIT_RELOAD_TAIL_EACH_WRITE === 'true' || process.env.NODE_ENV === 'production';
 
     private getLogPath(date: Date = new Date()) {
         return `.orchestra/audit/log_${date.toISOString().split('T')[0]}.jsonl`;
     }
 
     private async initializeFromTail(logPath: string = this.getLogPath(), force = false) {
-        if (this.initialized && !force) return;
-        this.initialized = true;
+        if (AuditLog.initializedPaths.has(logPath) && !force) {
+            this.lastHash = AuditLog.tailHashes.get(logPath) || 'GENESIS';
+            return;
+        }
+        AuditLog.initializedPaths.add(logPath);
         this.lastHash = 'GENESIS';
 
         try {
@@ -39,6 +44,7 @@ export class AuditLog {
                     const entry = JSON.parse(lines[i]) as AuditEntry;
                     if (entry.hash) {
                         this.lastHash = entry.hash;
+                        AuditLog.tailHashes.set(logPath, entry.hash);
                         return;
                     }
                 } catch {
@@ -50,6 +56,7 @@ export class AuditLog {
                 console.warn('[AUDIT] Failed to load previous audit tail:', err.message);
             }
         }
+        AuditLog.tailHashes.set(logPath, this.lastHash);
     }
 
     /**
@@ -59,9 +66,10 @@ export class AuditLog {
     public async log(threadId: string, agentId: string, action: string, description: string): Promise<void> {
         const logPath = this.getLogPath();
         await this.enqueueWrite(logPath, async () => this.withAuditLock(logPath, async () => {
-            await this.initializeFromTail(logPath, true);
+            await this.initializeFromTail(logPath, this.reloadTailEachWrite);
             const timestamp = Date.now();
-            const entryBody = `${timestamp}|${threadId}|${agentId}|${action}|${description}|${this.lastHash}`;
+            const previousHash = AuditLog.tailHashes.get(logPath) || this.lastHash;
+            const entryBody = `${timestamp}|${threadId}|${agentId}|${action}|${description}|${previousHash}`;
             const hash = createHash('sha256').update(entryBody).digest('hex');
 
             const entry: AuditEntry = {
@@ -70,7 +78,7 @@ export class AuditLog {
                 agentId,
                 action,
                 description,
-                previousHash: this.lastHash,
+                previousHash,
                 hash
             };
 
@@ -80,6 +88,7 @@ export class AuditLog {
             try {
                 await globalStorageMesh.appendFile(logPath, logLine);
                 this.lastHash = hash;
+                AuditLog.tailHashes.set(logPath, hash);
                 console.log(`[AUDIT] ${action} logged for ${agentId} in thread ${threadId}`);
             } catch (err: any) {
                 console.error('[AUDIT] Failed to persist entry:', err);
@@ -133,6 +142,26 @@ export class AuditLog {
 
     public async verifyChain(date: Date = new Date()): Promise<{ valid: boolean; entries: number; errors: string[] }> {
         return this.verify(date);
+    }
+
+    public async readEntries(
+        date: Date = new Date(),
+        options: { fromTimestamp?: number; threadId?: string } = {}
+    ): Promise<AuditEntry[]> {
+        try {
+            const logData = await globalStorageMesh.readFile(this.getLogPath(date));
+            return logData.toString()
+                .split('\n')
+                .filter(Boolean)
+                .map(line => JSON.parse(line) as AuditEntry)
+                .filter(entry => !options.fromTimestamp || entry.timestamp >= options.fromTimestamp)
+                .filter(entry => !options.threadId || entry.threadId === options.threadId);
+        } catch (err: any) {
+            if (err.message?.includes('ENOENT') || err.message?.includes('File not found')) {
+                return [];
+            }
+            throw err;
+        }
     }
 
     private async withAuditLock<T>(logPath: string, operation: () => Promise<T>): Promise<T> {
