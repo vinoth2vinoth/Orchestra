@@ -20,6 +20,7 @@ export type ModelTier = 'POLICY' | 'EXECUTION' | 'UTILITY';
 
 export interface LLMConfig {
     apiKey?: string;
+    provider?: Exclude<ProviderType, 'unknown'>; // Optional explicit provider to avoid API-key guessing.
     modelName?: string; // Optional override, otherwise defaults to best model per provider
     baseURL?: string; // Optional custom endpoint for generic OpenAI-compatible providers
     temperature?: number;
@@ -36,7 +37,11 @@ export class ProviderRegistry {
     /**
      * Infer the provider based on standard API key prefixes and formats.
      */
-    public static detectProvider(apiKey: string, modelName?: string, baseURL?: string): ProviderType {
+    public static detectProvider(apiKey: string = '', modelName?: string, baseURL?: string, provider?: ProviderType): ProviderType {
+        if (provider && provider !== 'unknown') {
+            return provider;
+        }
+
         if (baseURL) {
             return 'openai'; 
         }
@@ -94,7 +99,7 @@ export class ProviderRegistry {
      * Used if Vercel API SDK breaks, is discontinued, or is bypassed via config.
      */
     public static async generateNativeREST(config: LLMConfig, systemPrompt: string, messages: any[], tools?: Record<string, any>, responseFormat?: any): Promise<any> {
-        const isGoogle = ProviderRegistry.detectProvider(config.apiKey, config.modelName) === 'gemini';
+        const isGoogle = ProviderRegistry.detectProvider(config.apiKey, config.modelName, config.baseURL, config.provider) === 'gemini';
         logToFile(`Entered generateNativeREST. isGoogle: ${isGoogle}, model: ${config.modelName}`);
         
         if (isGoogle) {
@@ -248,7 +253,7 @@ export class ProviderRegistry {
      * Allows multi-modal objects in messages.
      */
     public static getModel(config: LLMConfig, messages?: any[], tools?: Record<string, any>): LanguageModel {
-        const provider = this.detectProvider(config.apiKey, config.modelName, config.baseURL);
+        const provider = this.detectProvider(config.apiKey, config.modelName, config.baseURL, config.provider);
         const tier = config.tier || 'EXECUTION';
         
         // Smart LLM Routing: Estimate complexity if model Name is not explicitly forced
@@ -456,7 +461,7 @@ export class ProviderRegistry {
                 return await this.generateNativeREST(config, systemPrompt, finalMessages, tools);
             }
 
-            const isDeepSeek = config.modelName?.includes('deepseek') || ProviderRegistry.detectProvider(config.apiKey, config.modelName, config.baseURL) === 'deepseek';
+            const isDeepSeek = config.modelName?.includes('deepseek') || ProviderRegistry.detectProvider(config.apiKey, config.modelName, config.baseURL, config.provider) === 'deepseek';
             const safeTools = isDeepSeek ? undefined : tools;
             const model = this.getModel(config, finalMessages, safeTools);
             logToFile(`Calling generateText with model: ${config.modelName || 'default'} (apikey: ${config.apiKey ? 'present' : 'missing'})`);
@@ -556,7 +561,7 @@ export class ProviderRegistry {
         }
         
         try {
-            const isDeepSeek = config.modelName?.includes('deepseek') || ProviderRegistry.detectProvider(config.apiKey, config.modelName, config.baseURL) === 'deepseek';
+            const isDeepSeek = config.modelName?.includes('deepseek') || ProviderRegistry.detectProvider(config.apiKey, config.modelName, config.baseURL, config.provider) === 'deepseek';
             const safeTools = isDeepSeek ? undefined : tools;
             const model = this.getModel(config, finalMessages, safeTools);
             const modelId = LLMAdapter.getModelId(model, config.modelName);

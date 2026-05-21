@@ -34,5 +34,6 @@ export { Sanitizer } from './security/Sanitizer.ts';
 export { createApiAuthMiddleware } from './security/ApiAuth.ts';
 export { AgentFrameworkError, ConfigurationError } from './core/ErrorHandler.ts';
 export type { ErrorContext } from './core/ErrorHandler.ts';
+export { ProviderRegistry } from './llm/ProviderRegistry.ts';
 export type { LLMConfig, ModelTier, ProviderType } from './llm/ProviderRegistry.ts';
 export type { LLMResponse } from './llm/LLMAdapter.ts';

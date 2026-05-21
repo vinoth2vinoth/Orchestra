@@ -103,6 +103,41 @@ await durable.compareAndSwap('release:gate', null, { status: 'pending' });
 
 The key-value adapter uses the Redis-compatible protocol and is tested with Valkey in CI. Keep application code typed against `StateAdapter` so the backend remains replaceable.
 
+## Choose Providers Explicitly
+
+`LLMConfig.provider` lets callers choose the provider instead of relying on API-key guessing. Use `baseURL` with `provider: 'openai'` for OpenAI-compatible local or hosted gateways.
+
+```typescript
+import { ProviderRegistry, type LLMConfig } from '../src/framework/index.ts';
+
+const localProvider: LLMConfig = {
+  provider: 'openai',
+  apiKey: process.env.LOCAL_LLM_API_KEY,
+  baseURL: process.env.LOCAL_LLM_BASE_URL,
+  modelName: 'local-model',
+  useNativeREST: true
+};
+
+const fallbackProvider: LLMConfig = {
+  ...localProvider,
+  fallbackConfig: {
+    provider: 'gemini',
+    apiKey: process.env.GEMINI_API_KEY,
+    modelName: 'gemini-2.5-flash'
+  }
+};
+
+await ProviderRegistry.generate(fallbackProvider, 'Follow policy.', [
+  { role: 'user', content: 'Summarize release risk.' }
+]);
+```
+
+Validate provider contracts without real API spend:
+
+```bash
+npm run test:providers
+```
+
 ## Add Runtime Plugins
 
 Plugins are lifecycle hooks. Pass a scoped `PluginRegistry` into `Orchestrator` to avoid global test or tenant coupling.
@@ -133,6 +168,7 @@ Useful SDK-facing checks:
 
 ```bash
 npm run test:sdk
+npm run test:providers
 npm run examples:check
 npm run test:reference
 ```
@@ -150,6 +186,6 @@ The public entrypoint currently exposes:
 - Memory: `MemoryMesh`, `MemoryMeshOptions`
 - Governance and safety: `PolicyEngine`, `AuditLog`, `Sanitizer`, `createApiAuthMiddleware`
 - Events and errors: `EventStore`, `FrameworkEvent`, `AgentFrameworkError`, `ConfigurationError`
-- LLM types: `LLMConfig`, `LLMResponse`, `ProviderType`, `ModelTier`
+- LLM: `ProviderRegistry`, `LLMConfig`, `LLMResponse`, `ProviderType`, `ModelTier`
 
 New examples should import only from `src/framework/index.ts`; the SDK contract test enforces this.
