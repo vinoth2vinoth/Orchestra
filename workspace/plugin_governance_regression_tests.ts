@@ -1,6 +1,7 @@
 import { PluginRegistry } from '../src/framework/core/PluginRegistry.ts';
 import { globalPluginRegistry } from '../src/framework/core/PluginRegistry.ts';
-import { registerEnterpriseFeatures } from '../src/framework/plugins/EnterpriseFeatures.ts';
+import { registerEnterpriseFeatures, SecretManagerPlugin } from '../src/framework/plugins/EnterpriseFeatures.ts';
+import { createRuntimeContext, SecretVault } from '../src/framework/index.ts';
 
 async function testPluginRegistryIsIdempotent() {
   const registry = new PluginRegistry();
@@ -17,6 +18,7 @@ async function testPluginRegistryIsIdempotent() {
 
 async function testStubGroundednessIsNotDefault() {
   delete process.env.ORCHESTRA_ENABLE_STUB_GROUNDEDNESS;
+  delete process.env.ORCHESTRA_ENABLE_SECRET_MANAGER_PLUGIN;
 
   registerEnterpriseFeatures();
 
@@ -24,11 +26,37 @@ async function testStubGroundednessIsNotDefault() {
   if (names.includes('GroundednessEvaluatorPlugin')) {
     throw new Error('GroundednessEvaluatorPlugin is a stub and must not be registered by default.');
   }
+  if (names.includes('SecretManagerPlugin')) {
+    throw new Error('SecretManagerPlugin must not be registered by default because it mutates tool payloads.');
+  }
+}
+
+async function testSecretManagerUsesRuntimeSecretStore() {
+  const secretVault = new SecretVault();
+  secretVault.setSecret('tenant-secret-plugin', 'apiKey', 'SCOPED_PLUGIN_SECRET');
+  const runtime = createRuntimeContext({ tenantId: 'tenant-secret-plugin', secretVault });
+  const plugin = new SecretManagerPlugin();
+
+  const result = await plugin.beforeToolInvoke(
+    'agent-a',
+    'searchTool',
+    { headers: { Authorization: 'Bearer {{apiKey}}' }, query: '{{missingSecret}}' },
+    'thread-a',
+    runtime
+  );
+
+  if (!result?.args?.headers?.Authorization?.includes('SCOPED_PLUGIN_SECRET')) {
+    throw new Error('Expected SecretManagerPlugin to resolve secrets from runtime secret store.');
+  }
+  if (result.args.query !== '{{missingSecret}}') {
+    throw new Error('Expected unresolved secret placeholders to stay unresolved.');
+  }
 }
 
 const tests = [
   ['plugin registry is idempotent', testPluginRegistryIsIdempotent],
-  ['stub groundedness is not default', testStubGroundednessIsNotDefault]
+  ['stub and payload-mutating plugins are not default', testStubGroundednessIsNotDefault],
+  ['secret manager uses runtime secret store', testSecretManagerUsesRuntimeSecretStore]
 ] as const;
 
 const results = [];

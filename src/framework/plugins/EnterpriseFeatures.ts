@@ -759,36 +759,32 @@ export class AgentTrajectoryDistillationPlugin implements AgenticPlugin {
     }
 }
 
-// 20. Dynamic Secret Manager Injection (HashiCorp Vault / GCP Secret Manager simulation)
+// 20. Runtime Secret Manager Injection
 export class SecretManagerPlugin implements AgenticPlugin {
     name = 'SecretManagerPlugin';
     version = '1.0.0';
     failureMode = 'fail-closed' as const;
 
-    // In a real framework, agents never see plain-text credentials in prompts or args.
-    // They emit {{DB_PASSWORD_PROD}} and this plugin resolves it synchronously before tool invocation.
-    private vault: Record<string, string> = {
-        'DB_PASSWORD_PROD': 'hUnt3r2!',
-        'STRIPE_LIVE_KEY': 'sk_live_123456789'
-    };
-
     async beforeToolInvoke(agentId: string, toolName: string, args: any, threadId: string, runtime?: RuntimeServices) {
         if (!args) return;
+        if (!runtime?.secretVault) {
+            return undefined;
+        }
 
         let argsStr = JSON.stringify(args);
         let mutated = false;
 
-        // Simple regex replace for {{SECRET_NAME}}
         argsStr = argsStr.replace(/\{\{(.+?)\}\}/g, (match, secretName) => {
-            if (this.vault[secretName]) {
+            const value = runtime.secretVault.getSecret(runtime.tenantId, String(secretName).trim());
+            if (value) {
                 mutated = true;
-                return this.vault[secretName];
+                return value;
             }
-            return match; // Unresolved secret
+            return match;
         });
 
         if (mutated) {
-            console.log(`[SecretManager] Dynamically injected Vault secrets into tool payload for ${toolName}.`);
+            console.log(`[SecretManager] Injected runtime-scoped secrets into tool payload for ${toolName}.`);
             return { args: JSON.parse(argsStr) };
         }
         return undefined;
@@ -1286,7 +1282,9 @@ export function registerEnterpriseFeatures() {
     globalPluginRegistry.register(new HumanInTheLoopApprovalPlugin());
     globalPluginRegistry.register(new DataSovereigntyRoutingPlugin());
     registerExperimental(new AgentTrajectoryDistillationPlugin());
-    globalPluginRegistry.register(new SecretManagerPlugin());
+    if (process.env.ORCHESTRA_ENABLE_SECRET_MANAGER_PLUGIN === 'true') {
+        globalPluginRegistry.register(new SecretManagerPlugin());
+    }
     registerExperimental(new FederatedAgentRouterPlugin());
     if (process.env.ORCHESTRA_ENABLE_CODE_SANDBOX === 'true') {
         globalPluginRegistry.register(new SecureCodeSandboxPlugin());
