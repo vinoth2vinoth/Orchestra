@@ -15,6 +15,11 @@ import { GraphStrategy } from './paradigms/GraphStrategy.ts';
 import { EventDrivenStrategy } from './paradigms/EventDrivenStrategy.ts';
 import { DecentralizedSwarmStrategy } from './paradigms/DecentralizedSwarmStrategy.ts';
 import { DebateStrategy } from './paradigms/DebateStrategy.ts';
+import { MemoryMesh } from '../memory/MemoryMesh.ts';
+import { ManagerAgent } from '../agents/ManagerAgent.ts';
+import { PlannerAgent } from '../agents/PlannerAgent.ts';
+import { CriticAgent } from '../agents/CriticAgent.ts';
+import { WorkerAgent } from '../agents/WorkerAgent.ts';
 
 export type Paradigm = 'GRAPH' | 'HIERARCHICAL' | 'CONSENSUS' | 'EVENT_DRIVEN' | 'SWARM' | 'DECENTRALIZED_SWARM' | 'MAP_REDUCE' | 'DEBATE' | 'MOA';
 
@@ -167,7 +172,8 @@ export class Orchestrator {
             stateStore: config.runtime.stateStore || this.runtime.stateStore,
             escalationManager: config.runtime.escalationManager || ((config.runtime.eventStore || config.runtime.auditLog) ? undefined : this.runtime.escalationManager),
             genealogy: config.runtime.genealogy || (config.runtime.eventStore ? undefined : this.runtime.genealogy),
-            toolRegistry: config.runtime.toolRegistry || this.runtime.toolRegistry
+            toolRegistry: config.runtime.toolRegistry || this.runtime.toolRegistry,
+            iamInterceptor: config.runtime.iamInterceptor || this.runtime.iamInterceptor
         }) : this.runtime;
         this.assignRuntimeToAgents(config.agents, workflowRuntime);
         workflowRuntime.eventStore.append({
@@ -233,7 +239,7 @@ export class Orchestrator {
                     };
                     await workflowRuntime.stateStore.saveState(error.approvalId, stateToSave);
                     
-                    await workflowRuntime.pluginRegistry.emitOnWorkflowSleep(threadId, stateToSave);
+                    await workflowRuntime.pluginRegistry.emitOnWorkflowSleep(threadId, stateToSave, workflowRuntime);
                     
                     workflowRuntime.eventStore.append({
                         type: 'WORKFLOW_COMPLETED', // Or suspended
@@ -393,7 +399,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
         }
 
         await this.runtime.escalationManager.resolveApproval(approvalId, resolution, feedback);
-        await this.runtime.pluginRegistry.emitOnWorkflowResume(state.threadId, state);
+        await this.runtime.pluginRegistry.emitOnWorkflowResume(state.threadId, state, this.runtime);
         
         this.runtime.eventStore.append({
             type: 'SYSTEM_HOOK',
@@ -408,16 +414,58 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
             resumedTask = `[HUMAN FEEDBACK INJECTED]\nResolution: ${resolution}\nFeedback: ${feedback}\n\nOriginal Task Context:\n${state.task}`;
         }
         
+        const resumedAgents = agents || this.reconstructAgentsFromState(state.agentDefinitions || []);
+        if (resumedAgents.length === 0) {
+            throw new ConfigurationError(`Cannot resume workflow ${approvalId}: suspended state contains no agent definitions.`);
+        }
+
         const resumedConfig: WorkflowConfig = {
             paradigm: state.config.paradigm,
-            agents: agents || [], 
+            agents: resumedAgents,
             maxRetries: 1,
-            blackboard: state.blackboard
+            blackboard: state.blackboard,
+            runtime: this.runtime
         };
 
         const result = await this.executeWorkflow(resumedTask, resumedConfig, state.threadId);
         await this.runtime.stateStore.deleteState(approvalId);
         return result;
+    }
+
+    private reconstructAgentsFromState(agentDefinitions: any[]): BaseAgent[] {
+        return agentDefinitions.map(def => {
+            const memory = new MemoryMesh({
+                tenantId: this.runtime.tenantId,
+                stateAdapter: this.runtime.stateAdapter,
+                eventStore: this.runtime.eventStore
+            });
+            const role = def.role || 'WORKER';
+            const args = [
+                def.name || def.id || 'Recovered AI Agent',
+                def.systemInstruction || def.description || 'Recovered AI Agent.',
+                role,
+                memory,
+                def.llmConfig || { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+                def.capabilities || [],
+                undefined,
+                def.priority,
+                def.urgency,
+                def.id,
+                this.runtime
+            ] as const;
+
+            switch (role) {
+                case 'MANAGER':
+                case 'JUDGE':
+                    return new ManagerAgent(...args);
+                case 'PLANNER':
+                    return new PlannerAgent(...args);
+                case 'CRITIC':
+                    return new CriticAgent(...args);
+                default:
+                    return new WorkerAgent(...args);
+            }
+        });
     }
     
     private async executeAgentTask(agent: BaseAgent, task: any, threadId: string, paradigm: string, blackboard?: Record<string, any>, parentSpan?: any, enableLearning: boolean = false, runtime: RuntimeServices = this.runtime): Promise<any> {
@@ -516,14 +564,14 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                 await runtime.auditLog.log(threadId, agent.card.id, 'AGENT_EXECUTION_START', `Agent ${agent.card.name} started task execution under paradigm ${paradigm}`);
 
                 try {
-                    currentTask = await runtime.pluginRegistry.emitBeforeAgentExecute(agent.card.id, currentTask, threadId);
+                    currentTask = await runtime.pluginRegistry.emitBeforeAgentExecute(agent.card.id, currentTask, threadId, runtime);
                 } catch (e: any) {
                     if (e.name === 'CacheHitException') {
                         // Cache Hit! Short-circuit LLM.
                         TelemetrySystem.emit('SEMANTIC_CACHE', threadId, {
                             action: 'TASK_CACHE_HIT',
                             category: 'PERFORMANCE'
-                        });
+                        }, runtime.eventStore);
                         await runtime.auditLog.log(threadId, agent.card.id, 'AGENT_EXECUTION_CACHE_HIT', `Agent ${agent.card.name} returned a cached response under paradigm ${paradigm}`);
                         return e.cachedResponse;
                     }
@@ -552,7 +600,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                     });
                 }, undefined, this.MAX_SILENCE_TIMEOUT_MS);
                 
-                result = await runtime.pluginRegistry.emitAfterAgentExecute(agent.card.id, currentTask, result, threadId);
+                result = await runtime.pluginRegistry.emitAfterAgentExecute(agent.card.id, currentTask, result, threadId, runtime);
                 
                 const duration = TelemetrySystem.endSpan(spanId);
                 runtime.eventStore.append({
@@ -577,7 +625,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                 });
                 await runtime.auditLog.log(threadId, agent.card.id, 'AGENT_EXECUTION_FAILED', `Agent ${agent.card.name} failed task execution under paradigm ${paradigm} in ${duration}ms: ${error.message}`);
 
-                const recovery = await runtime.pluginRegistry.emitOnAgentFault(agent.card.id, error, currentTask, threadId);
+                const recovery = await runtime.pluginRegistry.emitOnAgentFault(agent.card.id, error, currentTask, threadId, runtime);
                 if (recovery && recovery.recovered) {
                     return recovery.result;
                 }

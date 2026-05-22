@@ -5,6 +5,7 @@ import {
   MemoryMesh,
   Orchestrator,
   PluginRegistry,
+  ProviderRegistry,
   ToolRegistry,
   WorkerPool
 } from '../src/framework/index.ts';
@@ -12,7 +13,7 @@ import { MapReduceStrategy } from '../src/framework/orchestration/paradigms/MapR
 import { MOAStrategy } from '../src/framework/orchestration/paradigms/MOAStrategy.ts';
 import { DebateStrategy } from '../src/framework/orchestration/paradigms/DebateStrategy.ts';
 import { MemoryStateAdapter } from '../src/framework/core/StateAdapter.ts';
-import { EventStore } from '../src/framework/core/EventStore.ts';
+import { EventStore, globalEventStore } from '../src/framework/core/EventStore.ts';
 import { LocalMessageBus } from '../src/framework/core/MessageBus.ts';
 import { QueueBroker } from '../src/framework/orchestration/QueueBroker.ts';
 import { PolicyEngine } from '../src/framework/governance/PolicyEngine.ts';
@@ -23,7 +24,13 @@ import { GenealogyTracker } from '../src/framework/governance/GenealogyTracker.t
 import { StateCheckpointer } from '../src/framework/orchestration/Checkpointer.ts';
 import { WBFTConsensus } from '../src/framework/consensus/WBFT.ts';
 import { Sanitizer } from '../src/framework/security/Sanitizer.ts';
+import { AuditTrailPlugin } from '../src/framework/plugins/EnterpriseFeatures.ts';
+import { runWithContext } from '../src/framework/core/ExecutionContext.ts';
+import { StorageMesh } from '../src/framework/storage/StorageMesh.ts';
+import { SimulationManager } from '../src/framework/core/SimulationManager.ts';
 import { z } from 'zod';
+import * as fs from 'fs';
+import * as path from 'path';
 
 function assert(condition: unknown, message: string) {
   if (!condition) throw new Error(message);
@@ -290,6 +297,54 @@ async function testToolRegistryUsesScopedIamInterceptor() {
   }
 }
 
+async function testPluginTelemetryUsesScopedEventStore() {
+  const pluginRegistry = new PluginRegistry();
+  pluginRegistry.register(new AuditTrailPlugin());
+  const toolRegistry = new ToolRegistry();
+  toolRegistry.register(
+    'auditTool',
+    'Emit audit trail through plugin hooks.',
+    z.object({ input: z.string() }),
+    async () => 'ok',
+    { capabilities: ['audit_tool'] }
+  );
+  const iamInterceptor = new IAMInterceptor();
+  iamInterceptor.registerPolicy({
+    tenantId: 'tenant-scoped-iam',
+    allowedTools: ['auditTool'],
+    requiredSecrets: {}
+  });
+  const runtime = createRuntime(pluginRegistry, toolRegistry, iamInterceptor);
+  const threadId = `FRESH_AUDIT_PLUGIN_SCOPE_${Date.now()}`;
+
+  try {
+    const tools = runtime.toolRegistry!.getToolsForAgent(['audit_tool']);
+    await runWithContext({
+      tenantId: runtime.tenantId,
+      agentId: 'agent-a',
+      threadId,
+      capabilities: ['audit_tool'],
+      runtime
+    }, async () => tools.auditTool.execute({ input: 'safe' }));
+
+    const scopedEvent = runtime.eventStore.getLogs().find(event =>
+      event.sourceAgentId === 'SECURE_AUDIT' &&
+      event.threadId === threadId &&
+      event.payload?.action === 'AUDIT_LOG_APPENDED'
+    );
+    assert(scopedEvent, 'Expected plugin telemetry event in scoped runtime event store');
+
+    const leakedEvent = globalEventStore.getLogs().find(event =>
+      event.sourceAgentId === 'SECURE_AUDIT' &&
+      event.threadId === threadId
+    );
+    assert(!leakedEvent, 'Expected plugin telemetry not to leak into global event store');
+  } finally {
+    runtime.eventStore.dispose();
+    runtime.queueBroker.dispose();
+  }
+}
+
 async function testMapReduceParsesJsonPlannerString() {
   const planner = new EchoAgent('json-planner', 'PLANNER');
   const worker = new EchoAgent('json-worker', 'WORKER');
@@ -419,6 +474,117 @@ async function testEscalationPendingApprovalExpires() {
   }
 }
 
+async function testSanitizerLabelsAnthropicKeys() {
+  const scrubbed = Sanitizer.scrubSecrets('secret=sk-ant-api03-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');
+  assert(scrubbed.includes('[REDACTED_API_KEY]'), `Expected Anthropic key to be labeled as API key, got ${scrubbed}`);
+  assert(!scrubbed.includes('sk-ant-api03-'), 'Expected Anthropic key material to be removed');
+}
+
+async function testStorageMeshDisposeClosesWatchers() {
+  const base = path.resolve('workspace', `storage-dispose-${crypto.randomUUID()}`);
+  fs.mkdirSync(base, { recursive: true });
+  fs.writeFileSync(path.join(base, 'tracked.txt'), 'hello');
+
+  const mesh = new StorageMesh(base);
+  try {
+    await mesh.protectDirectory('.');
+    assert((mesh as any).watchers.size > 0, 'Expected StorageMesh to open at least one watcher');
+    mesh.dispose();
+    assert((mesh as any).watchers.size === 0, 'Expected StorageMesh.dispose() to clear watchers');
+    assert((mesh as any).healBackoffTimers.size === 0, 'Expected StorageMesh.dispose() to clear heal timers');
+  } finally {
+    mesh.dispose();
+    const cwd = process.cwd();
+    if (base.startsWith(cwd)) fs.rmSync(base, { recursive: true, force: true });
+  }
+}
+
+async function testEventStoreReportsDroppedTailEvents() {
+  const eventStore = new EventStore({
+    stateAdapter: new MemoryStateAdapter(),
+    messageBus: new LocalMessageBus(),
+    historyKey: `fresh-audit-event-tail-${crypto.randomUUID()}`
+  });
+  try {
+    for (let i = 0; i < 1050; i++) {
+      eventStore.append({
+        type: 'SYSTEM_HOOK',
+        sourceAgentId: 'tail-test',
+        threadId: `T${i}`,
+        payload: { i }
+      });
+    }
+    const diagnostics = eventStore.getDiagnostics();
+    assert(diagnostics.totalDroppedEvents > 0, `Expected dropped event diagnostics, got ${JSON.stringify(diagnostics)}`);
+    assert(diagnostics.cachedEvents <= 1000, `Expected cached events to remain bounded, got ${diagnostics.cachedEvents}`);
+  } finally {
+    eventStore.dispose();
+  }
+}
+
+async function testProviderFallbackRunsBeforePrimaryRetriesOnQuota() {
+  let primaryCalls = 0;
+  let fallbackCalls = 0;
+  const result = await (ProviderRegistry as any).resilientExecute(
+    async () => {
+      primaryCalls++;
+      const err: any = new Error('rate limit exceeded');
+      err.statusCode = 429;
+      throw err;
+    },
+    { apiKey: 'fallback', modelName: 'fallback-model' },
+    4,
+    async () => {
+      fallbackCalls++;
+      return 'fallback-result';
+    }
+  );
+
+  assert(result === 'fallback-result', `Expected fallback result, got ${result}`);
+  assert(primaryCalls === 1, `Expected one primary attempt before fallback, got ${primaryCalls}`);
+  assert(fallbackCalls === 1, `Expected one fallback call, got ${fallbackCalls}`);
+}
+
+async function testHitlResumeReconstructsSavedAgents() {
+  const stateStore = new StateStore();
+  const eventStore = new EventStore({
+    stateAdapter: new MemoryStateAdapter(),
+    messageBus: new LocalMessageBus(),
+    historyKey: `fresh-audit-resume-${crypto.randomUUID()}`
+  });
+  const orchestrator = new Orchestrator({ stateStore, eventStore });
+  const approvalId = `approval-${crypto.randomUUID()}`;
+  const threadId = `HITL_RESUME_${Date.now()}`;
+
+  await stateStore.saveState(approvalId, {
+    approvalId,
+    threadId,
+    task: 'Resume this simple approved task.',
+    config: { paradigm: 'HIERARCHICAL' },
+    history: [],
+    blackboard: {},
+    agentDefinitions: [{
+      id: 'resume-manager',
+      name: 'Resume Manager',
+      role: 'MANAGER',
+      systemInstruction: 'You are a deterministic resumed manager AI Agent.',
+      llmConfig: { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+      capabilities: []
+    }]
+  });
+
+  SimulationManager.enable();
+  try {
+    const result = await orchestrator.resumeWorkflow(approvalId, 'APPROVED', 'Continue.');
+    assert(result, 'Expected resumed workflow to return a result');
+    const savedState = await stateStore.getState(approvalId);
+    assert(!savedState, 'Expected approved workflow state to be deleted after successful resume');
+  } finally {
+    SimulationManager.disable();
+    eventStore.dispose();
+  }
+}
+
 const tests = [
   ['plugin registry continues after bad plugin', testPluginRegistryContinuesAfterBadPlugin],
   ['after agent plugin failure keeps result', testAfterAgentPluginFailureKeepsResult],
@@ -429,14 +595,20 @@ const tests = [
   ['runtime worker pool logs to scoped event store', testRuntimeWorkerPoolLogsToScopedEventStore],
   ['runtime state backend scopes policy signals', testRuntimeStateBackendScopesPolicySignals],
   ['tool registry uses scoped IAM interceptor', testToolRegistryUsesScopedIamInterceptor],
+  ['plugin telemetry uses scoped event store', testPluginTelemetryUsesScopedEventStore],
   ['map-reduce parses JSON planner string', testMapReduceParsesJsonPlannerString],
   ['WBFT clusters short unanimous answers', testWbftClustersShortUnanimousAnswers],
   ['genealogy empty outputs have strong hash', testGenealogyEmptyOutputsHaveStrongHash],
   ['MOA requires manager for synthesis', testMoaRequiresManagerForSynthesis],
   ['debate requires debaters', testDebateRequiresDebaters],
   ['sanitizer detects turn injection', testSanitizerDetectsTurnInjection],
+  ['sanitizer labels Anthropic keys', testSanitizerLabelsAnthropicKeys],
   ['policy engine blocks repeated small tasks', testPolicyEngineBlocksRepeatedSmallTasks],
-  ['escalation pending approval expires', testEscalationPendingApprovalExpires]
+  ['escalation pending approval expires', testEscalationPendingApprovalExpires],
+  ['storage mesh dispose closes watchers', testStorageMeshDisposeClosesWatchers],
+  ['event store reports dropped tail events', testEventStoreReportsDroppedTailEvents],
+  ['provider fallback runs before primary retries on quota', testProviderFallbackRunsBeforePrimaryRetriesOnQuota],
+  ['HITL resume reconstructs saved AI Agents', testHitlResumeReconstructsSavedAgents]
 ] as const;
 
 const results: Array<{ name: string; ok: boolean; ms: number; error?: string }> = [];

@@ -320,10 +320,18 @@ export class ProviderRegistry {
     /**
      * Resiliently executes an LLM generation with exponential backoff on transient errors.
      */
+    private static shouldFailOverImmediately(error: any): boolean {
+        const message = String(error?.message || '').toLowerCase();
+        return error?.statusCode === 429 ||
+            message.includes('rate limit') ||
+            message.includes('quota');
+    }
+
     private static async resilientExecute<T>(
         fn: () => Promise<T>, 
         fallbackConfig?: LLMConfig,
-        retryCount = 4
+        retryCount = 4,
+        runFallback?: () => Promise<T>
     ): Promise<T> {
         let lastError: any;
         for (let i = 0; i < retryCount; i++) {
@@ -338,6 +346,11 @@ export class ProviderRegistry {
                                    error.message?.includes('timeout') ||
                                    error.message?.includes('quota');
 
+                if (fallbackConfig && runFallback && i === 0 && this.shouldFailOverImmediately(error)) {
+                    console.warn(`LLM primary provider failed with quota/rate-limit signal. Trying fallback provider before retrying primary.`);
+                    return await runFallback();
+                }
+
                 if (!isTransient) throw error; // Fatal error, don't retry
 
                 if (i < retryCount - 1) {
@@ -348,10 +361,9 @@ export class ProviderRegistry {
             }
         }
 
-        if (fallbackConfig) {
+        if (fallbackConfig && runFallback) {
             console.warn(`LLM Exhausted Retries with Primary. Failing over to fallback provider...`);
-            // We would recursively call wait... but we need to know WHICH generation method to call.
-            // Simplified: we just let the caller handle fallback if possible, or we throw.
+            return await runFallback();
         }
         
         throw lastError;
@@ -422,7 +434,9 @@ export class ProviderRegistry {
                 console.error(`[ProviderRegistry] generateObject failed: ${err.message}`, err);
                 throw err;
             }
-        }, config.fallbackConfig).catch(error => {
+        }, config.fallbackConfig, 4, config.fallbackConfig
+            ? () => this.generateObj(config.fallbackConfig!, systemPrompt, messages, schema)
+            : undefined).catch(error => {
             if (config.fallbackConfig) return this.generateObj(config.fallbackConfig, systemPrompt, messages, schema);
             throw error;
         });
@@ -507,7 +521,9 @@ export class ProviderRegistry {
                 logToFile(`generateText FAILED: ${err.message}`);
                 throw err;
             }
-        }, config.fallbackConfig).catch(error => {
+        }, config.fallbackConfig, 4, config.fallbackConfig
+            ? () => this.generate(config.fallbackConfig!, systemPrompt, messages, tools)
+            : undefined).catch(error => {
             if (config.fallbackConfig) return this.generate(config.fallbackConfig, systemPrompt, messages, tools);
             throw error;
         });
@@ -566,13 +582,15 @@ export class ProviderRegistry {
             const model = this.getModel(config, finalMessages, safeTools);
             const modelId = LLMAdapter.getModelId(model, config.modelName);
             
-            console.log("\n--- TOOLS PAYLOAD DEEPSEEK DEBUG ---");
-            try {
-               const aiTools = safeTools as any;
-               for (const key of Object.keys(aiTools || {})) {
-                  console.log(key, JSON.stringify(aiTools[key].parameters, null, 2));
-               }
-            } catch (e) {}
+            if (process.env.ORCHESTRA_DEBUG === 'true') {
+                console.log("\n--- TOOLS PAYLOAD DEEPSEEK DEBUG ---");
+                try {
+                    const aiTools = safeTools as any;
+                    for (const key of Object.keys(aiTools || {})) {
+                        console.log(key, JSON.stringify(aiTools[key].parameters, null, 2));
+                    }
+                } catch (e) {}
+            }
 
             const response = await streamText({
                 model,

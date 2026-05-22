@@ -89,22 +89,22 @@ export class ToolRegistry {
                 }, name, args);
 
                 // Step 3: Emit Hooks
-                const modifier = await pluginRegistry.emitBeforeToolInvoke(agentId, name, securedArgs, threadId);
+                const modifier = await pluginRegistry.emitBeforeToolInvoke(agentId, name, securedArgs, threadId, context.runtime);
                 eventStore.append({
                     type: 'TOOL_CALL_REQUESTED',
                     sourceAgentId: agentId,
                     threadId,
                     payload: { tool: modifier.toolName, args: summarizeToolArgs(modifier.args) }
                 });
-                await pluginRegistry.emitOnToolCalled(agentId, modifier.toolName, modifier.args, threadId);
+                await pluginRegistry.emitOnToolCalled(agentId, modifier.toolName, modifier.args, threadId, context.runtime);
                 
                 // Step 4: Execute using secured arguments
                 try {
                     const result = await execute(modifier.args, context);
-                    await pluginRegistry.emitAfterToolInvoke(agentId, modifier.toolName, modifier.args, result, threadId);
+                    await pluginRegistry.emitAfterToolInvoke(agentId, modifier.toolName, modifier.args, result, threadId, context.runtime);
                     return result;
                 } catch (error) {
-                    await pluginRegistry.emitOnToolFault(agentId, modifier.toolName, modifier.args, error, threadId);
+                    await pluginRegistry.emitOnToolFault(agentId, modifier.toolName, modifier.args, error, threadId, context.runtime);
                     throw error;
                 }
             }

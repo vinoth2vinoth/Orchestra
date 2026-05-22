@@ -79,7 +79,7 @@ Otherwise, provide a "ROOT_CAUSE_ANALYSIS" and a "RECOVERY_INSTRUCTION" for the 
                         action: 'REASONING_LOOP_RETRY',
                         category: 'AGENT_LOGIC',
                         metadata: { reason: 'STRATEGY_REFRAME', feedback: critique }
-                    });
+                    }, this.runtime.eventStore);
 
                     let feedbackInstruction = `CRITIQUE_RECEIVED: Your previous attempt was rejected.
 FEEDBACK: ${critique}
@@ -101,7 +101,7 @@ Refined Strategy: Before giving the final answer, internalize the feedback. Ensu
                     action: 'REASONING_LOOP_RETRY',
                     category: 'AGENT_LOGIC',
                     metadata: { reason: 'EXCEPTION_THROWN', error: errorMsg }
-                });
+                }, this.runtime.eventStore);
 
                 if (attempts >= maxHealingLoops) throw err;
 

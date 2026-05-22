@@ -184,6 +184,20 @@ export class StorageMesh {
         this.watchers.set(dirPath, watcher);
     }
 
+    public dispose(): void {
+        for (const watcher of this.watchers.values()) {
+            watcher.close();
+        }
+        this.watchers.clear();
+
+        for (const timer of this.healBackoffTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.healBackoffTimers.clear();
+        this.activeHeals.clear();
+        this.activeWrites.clear();
+    }
+
     /**
      * Authorized write: Write file and create a backup snapshot for self-healing.
      * Updates the golden master so file watcher doesn't consider it tampering.

@@ -1,3 +1,5 @@
+import type { RuntimeServices } from './RuntimeContext.ts';
+
 export class CacheHitException extends Error {
     constructor(public cachedResponse: any) {
         super('CACHE_HIT');
@@ -18,22 +20,22 @@ export interface AgenticPlugin {
     failureMode?: 'fail-open' | 'fail-closed';
     
     // Lifecycle Hooks
-    beforeAgentExecute?: (agentId: string, task: any, threadId: string) => Promise<any | void>;
-    afterAgentExecute?: (agentId: string, task: any, result: any, threadId: string) => Promise<any | void>;
+    beforeAgentExecute?: (agentId: string, task: any, threadId: string, runtime?: RuntimeServices) => Promise<any | void>;
+    afterAgentExecute?: (agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) => Promise<any | void>;
     
-    beforeToolInvoke?: (agentId: string, toolName: string, args: any, threadId: string) => Promise<{ toolName?: string, args?: any } | void>;
-    onToolCalled?: (agentId: string, toolName: string, args: any, threadId: string) => Promise<void>;
-    afterToolInvoke?: (agentId: string, toolName: string, args: any, result: any, threadId: string) => Promise<void>;
-    onToolFault?: (agentId: string, toolName: string, args: any, error: any, threadId: string) => Promise<void>;
+    beforeToolInvoke?: (agentId: string, toolName: string, args: any, threadId: string, runtime?: RuntimeServices) => Promise<{ toolName?: string, args?: any } | void>;
+    onToolCalled?: (agentId: string, toolName: string, args: any, threadId: string, runtime?: RuntimeServices) => Promise<void>;
+    afterToolInvoke?: (agentId: string, toolName: string, args: any, result: any, threadId: string, runtime?: RuntimeServices) => Promise<void>;
+    onToolFault?: (agentId: string, toolName: string, args: any, error: any, threadId: string, runtime?: RuntimeServices) => Promise<void>;
     
-    onWorkflowSleep?: (threadId: string, state: any) => Promise<void>;
-    onWorkflowResume?: (threadId: string, state: any) => Promise<void>;
+    onWorkflowSleep?: (threadId: string, state: any, runtime?: RuntimeServices) => Promise<void>;
+    onWorkflowResume?: (threadId: string, state: any, runtime?: RuntimeServices) => Promise<void>;
     
-    onAgentFault?: (agentId: string, error: any, task: any, threadId: string) => Promise<{ recovered: boolean, result?: any } | void>;
+    onAgentFault?: (agentId: string, error: any, task: any, threadId: string, runtime?: RuntimeServices) => Promise<{ recovered: boolean, result?: any } | void>;
     
-    beforeLLMCall?: (agentId: string, llmConfig: any, messages: any[], threadId: string) => Promise<{ llmConfig?: any, messages?: any[] } | void>;
-    onLLMCall?: (agentId: string, messages: any[], threadId: string) => Promise<void>;
-    onLLMResponse?: (agentId: string, response: any, usage: any, threadId: string) => Promise<void>;
+    beforeLLMCall?: (agentId: string, llmConfig: any, messages: any[], threadId: string, runtime?: RuntimeServices) => Promise<{ llmConfig?: any, messages?: any[] } | void>;
+    onLLMCall?: (agentId: string, messages: any[], threadId: string, runtime?: RuntimeServices) => Promise<void>;
+    onLLMResponse?: (agentId: string, response: any, usage: any, threadId: string, runtime?: RuntimeServices) => Promise<void>;
 }
 
 export class PluginRegistry {
@@ -90,12 +92,12 @@ export class PluginRegistry {
         return this.plugins.map(plugin => ({ name: plugin.name, version: plugin.version }));
     }
 
-    public async emitBeforeAgentExecute(agentId: string, task: any, threadId: string): Promise<any> {
+    public async emitBeforeAgentExecute(agentId: string, task: any, threadId: string, runtime?: RuntimeServices): Promise<any> {
         let currentTask = task;
         for (const plugin of this.plugins) {
             if (plugin.beforeAgentExecute) {
                 try {
-                    const modifiedTask = await plugin.beforeAgentExecute(agentId, currentTask, threadId);
+                    const modifiedTask = await plugin.beforeAgentExecute(agentId, currentTask, threadId, runtime);
                     if (modifiedTask !== undefined) {
                         if (!this.hasSameTaskShape(currentTask, modifiedTask)) {
                             this.logPluginError(plugin, 'beforeAgentExecute', new Error(`Rejected task shape change from ${typeof currentTask} to ${typeof modifiedTask}`));
@@ -112,12 +114,12 @@ export class PluginRegistry {
         return currentTask;
     }
 
-    public async emitAfterAgentExecute(agentId: string, task: any, result: any, threadId: string): Promise<any> {
+    public async emitAfterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices): Promise<any> {
         let currentResult = result;
         for (const plugin of this.plugins) {
             if (plugin.afterAgentExecute) {
                 try {
-                    const modifiedResult = await plugin.afterAgentExecute(agentId, task, currentResult, threadId);
+                    const modifiedResult = await plugin.afterAgentExecute(agentId, task, currentResult, threadId, runtime);
                     if (modifiedResult !== undefined) {
                         currentResult = modifiedResult;
                     }
@@ -130,12 +132,12 @@ export class PluginRegistry {
         return currentResult;
     }
 
-    public async emitBeforeToolInvoke(agentId: string, toolName: string, args: any, threadId: string): Promise<{ toolName: string, args: any }> {
+    public async emitBeforeToolInvoke(agentId: string, toolName: string, args: any, threadId: string, runtime?: RuntimeServices): Promise<{ toolName: string, args: any }> {
         let currentToolInfo = { toolName, args };
         for (const plugin of this.plugins) {
             if (plugin.beforeToolInvoke) {
                 try {
-                    const modifier = await plugin.beforeToolInvoke(agentId, currentToolInfo.toolName, currentToolInfo.args, threadId);
+                    const modifier = await plugin.beforeToolInvoke(agentId, currentToolInfo.toolName, currentToolInfo.args, threadId, runtime);
                     if (modifier) {
                         if (modifier.toolName) currentToolInfo.toolName = modifier.toolName;
                         if (modifier.args) currentToolInfo.args = modifier.args;
@@ -149,11 +151,11 @@ export class PluginRegistry {
         return currentToolInfo;
     }
 
-    public async emitOnToolCalled(agentId: string, toolName: string, args: any, threadId: string): Promise<void> {
+    public async emitOnToolCalled(agentId: string, toolName: string, args: any, threadId: string, runtime?: RuntimeServices): Promise<void> {
         for (const plugin of this.plugins) {
             if (plugin.onToolCalled) {
                 try {
-                    await plugin.onToolCalled(agentId, toolName, args, threadId);
+                    await plugin.onToolCalled(agentId, toolName, args, threadId, runtime);
                 } catch (err) {
                     if (this.shouldRethrow(plugin, err)) throw err;
                     this.logPluginError(plugin, 'onToolCalled', err);
@@ -162,11 +164,11 @@ export class PluginRegistry {
         }
     }
 
-    public async emitAfterToolInvoke(agentId: string, toolName: string, args: any, result: any, threadId: string): Promise<void> {
+    public async emitAfterToolInvoke(agentId: string, toolName: string, args: any, result: any, threadId: string, runtime?: RuntimeServices): Promise<void> {
         for (const plugin of this.plugins) {
             if (plugin.afterToolInvoke) {
                 try {
-                    await plugin.afterToolInvoke(agentId, toolName, args, result, threadId);
+                    await plugin.afterToolInvoke(agentId, toolName, args, result, threadId, runtime);
                 } catch (err) {
                     if (this.shouldRethrow(plugin, err)) throw err;
                     this.logPluginError(plugin, 'afterToolInvoke', err);
@@ -175,11 +177,11 @@ export class PluginRegistry {
         }
     }
 
-    public async emitOnToolFault(agentId: string, toolName: string, args: any, error: any, threadId: string): Promise<void> {
+    public async emitOnToolFault(agentId: string, toolName: string, args: any, error: any, threadId: string, runtime?: RuntimeServices): Promise<void> {
         for (const plugin of this.plugins) {
             if (plugin.onToolFault) {
                 try {
-                    await plugin.onToolFault(agentId, toolName, args, error, threadId);
+                    await plugin.onToolFault(agentId, toolName, args, error, threadId, runtime);
                 } catch (err) {
                     if (this.shouldRethrow(plugin, err)) throw err;
                     this.logPluginError(plugin, 'onToolFault', err);
@@ -188,11 +190,11 @@ export class PluginRegistry {
         }
     }
 
-    public async emitOnWorkflowSleep(threadId: string, state: any): Promise<void> {
+    public async emitOnWorkflowSleep(threadId: string, state: any, runtime?: RuntimeServices): Promise<void> {
         for (const plugin of this.plugins) {
             if (plugin.onWorkflowSleep) {
                 try {
-                    await plugin.onWorkflowSleep(threadId, state);
+                    await plugin.onWorkflowSleep(threadId, state, runtime);
                 } catch (err) {
                     if (this.shouldRethrow(plugin, err)) throw err;
                     this.logPluginError(plugin, 'onWorkflowSleep', err);
@@ -201,11 +203,11 @@ export class PluginRegistry {
         }
     }
 
-    public async emitOnWorkflowResume(threadId: string, state: any): Promise<void> {
+    public async emitOnWorkflowResume(threadId: string, state: any, runtime?: RuntimeServices): Promise<void> {
         for (const plugin of this.plugins) {
             if (plugin.onWorkflowResume) {
                 try {
-                    await plugin.onWorkflowResume(threadId, state);
+                    await plugin.onWorkflowResume(threadId, state, runtime);
                 } catch (err) {
                     if (this.shouldRethrow(plugin, err)) throw err;
                     this.logPluginError(plugin, 'onWorkflowResume', err);
@@ -214,11 +216,11 @@ export class PluginRegistry {
         }
     }
 
-    public async emitOnAgentFault(agentId: string, error: any, task: any, threadId: string): Promise<{ recovered: boolean, result?: any } | undefined> {
+    public async emitOnAgentFault(agentId: string, error: any, task: any, threadId: string, runtime?: RuntimeServices): Promise<{ recovered: boolean, result?: any } | undefined> {
         for (const plugin of this.plugins) {
             if (plugin.onAgentFault) {
                 try {
-                    const recovery = await plugin.onAgentFault(agentId, error, task, threadId);
+                    const recovery = await plugin.onAgentFault(agentId, error, task, threadId, runtime);
                     if (recovery && recovery.recovered) {
                         return recovery;
                     }
@@ -231,13 +233,13 @@ export class PluginRegistry {
         return undefined;
     }
 
-    public async emitBeforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string): Promise<{ llmConfig: any, messages: any[] }> {
+    public async emitBeforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string, runtime?: RuntimeServices): Promise<{ llmConfig: any, messages: any[] }> {
         let currentConfig = llmConfig;
         let currentMessages = messages;
         for (const plugin of this.plugins) {
             if (plugin.beforeLLMCall) {
                 try {
-                    const modifier = await plugin.beforeLLMCall(agentId, currentConfig, currentMessages, threadId);
+                    const modifier = await plugin.beforeLLMCall(agentId, currentConfig, currentMessages, threadId, runtime);
                     if (modifier) {
                         if (modifier.llmConfig) currentConfig = modifier.llmConfig;
                         if (modifier.messages) currentMessages = modifier.messages;
@@ -251,11 +253,11 @@ export class PluginRegistry {
         return { llmConfig: currentConfig, messages: currentMessages };
     }
 
-    public async emitOnLLMCall(agentId: string, messages: any[], threadId: string): Promise<void> {
+    public async emitOnLLMCall(agentId: string, messages: any[], threadId: string, runtime?: RuntimeServices): Promise<void> {
         for (const plugin of this.plugins) {
             if (plugin.onLLMCall) {
                 try {
-                    await plugin.onLLMCall(agentId, messages, threadId);
+                    await plugin.onLLMCall(agentId, messages, threadId, runtime);
                 } catch (err) {
                     if (this.shouldRethrow(plugin, err)) throw err;
                     this.logPluginError(plugin, 'onLLMCall', err);
@@ -264,11 +266,11 @@ export class PluginRegistry {
         }
     }
 
-    public async emitOnLLMResponse(agentId: string, response: any, usage: any, threadId: string): Promise<void> {
+    public async emitOnLLMResponse(agentId: string, response: any, usage: any, threadId: string, runtime?: RuntimeServices): Promise<void> {
         for (const plugin of this.plugins) {
             if (plugin.onLLMResponse) {
                 try {
-                    await plugin.onLLMResponse(agentId, response, usage, threadId);
+                    await plugin.onLLMResponse(agentId, response, usage, threadId, runtime);
                 } catch (err) {
                     if (this.shouldRethrow(plugin, err)) throw err;
                     this.logPluginError(plugin, 'onLLMResponse', err);

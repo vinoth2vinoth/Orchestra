@@ -40,8 +40,8 @@ export class Sanitizer {
         
         let scrubbed = text;
         
-        // Redact standard API keys (e.g. sk-..., AIza...)
-        scrubbed = scrubbed.replace(/(sk-[a-zA-Z0-9]{20,})|(AIza[a-zA-Z0-9_-]{35,})/g, '[REDACTED_API_KEY]');
+        // Redact standard API keys (e.g. OpenAI sk-..., Anthropic sk-ant-api03-..., Google AIza...)
+        scrubbed = scrubbed.replace(/(sk-ant-api03-[a-zA-Z0-9_-]{20,})|(sk-[a-zA-Z0-9]{20,})|(AIza[a-zA-Z0-9_-]{35,})/g, '[REDACTED_API_KEY]');
         
         // Redact JWTs
         scrubbed = scrubbed.replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, '[REDACTED_JWT]');

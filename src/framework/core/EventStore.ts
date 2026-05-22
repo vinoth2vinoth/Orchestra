@@ -25,6 +25,7 @@ export class EventStore {
     private readonly topic: string;
     private unsubscribeFromBus?: () => void;
     private disposed = false;
+    private totalDroppedEvents = 0;
     public readonly ready: Promise<void>;
 
     constructor(options: EventStoreOptions = {}) {
@@ -97,6 +98,9 @@ export class EventStore {
         // --- PERFORMANCE: Global Tail Limit (Dimension 04) ---
         // Keep only latest 1000 events in memory overall
         if (this.events.length > 1000) {
+            const dropped = this.events.length - 500;
+            this.totalDroppedEvents += dropped;
+            console.warn(`[EventStore] In-memory event tail exceeded 1000 events. Dropping ${dropped} oldest cached events; durable history remains in StateAdapter.`);
             this.events = this.events.slice(-500);
             this.rebuildIndexes();
         }
@@ -170,6 +174,16 @@ export class EventStore {
 
     public getLogs(): FrameworkEvent[] {
         return [...this.events].map(e => Object.freeze({ ...e }));
+    }
+
+    public getDiagnostics() {
+        return {
+            cachedEvents: this.events.length,
+            indexedThreads: this.threadIndex.size,
+            totalDroppedEvents: this.totalDroppedEvents,
+            historyKey: this.historyKey,
+            topic: this.topic
+        };
     }
 
     public getSnapshotAtTimestamp(threadId: string, timestamp: number): FrameworkEvent[] {

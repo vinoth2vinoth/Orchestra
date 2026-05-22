@@ -165,7 +165,7 @@ FORMAT: End your response with the verification status.
                 action: 'REASONING_LOOP_STARTED',
                 category: 'AGENT_LOGIC',
                 metadata: { attempt: attempts }
-            });
+            }, this.runtime.eventStore);
 
             const result = await this.generateResponse(enhancedSystem, currentMessages, threadId);
             
@@ -175,7 +175,7 @@ FORMAT: End your response with the verification status.
                     action: 'REASONING_LOOP_COMPLETED',
                     category: 'AGENT_LOGIC',
                     metadata: { status: 'SUCCESS', tokens: result.usage }
-                });
+                }, this.runtime.eventStore);
                 return result;
             }
 
@@ -418,8 +418,8 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
             } as any)
         };
 
-        const modifier = await this.runtime.pluginRegistry.emitBeforeLLMCall(this.card.id, this.llmConfig, messages, threadId);
-        await this.runtime.pluginRegistry.emitOnLLMCall(this.card.id, modifier.messages, threadId);
+        const modifier = await this.runtime.pluginRegistry.emitBeforeLLMCall(this.card.id, this.llmConfig, messages, threadId, this.runtime);
+        await this.runtime.pluginRegistry.emitOnLLMCall(this.card.id, modifier.messages, threadId, this.runtime);
 
         const resultPromise = this.circuitBreaker.execute(async () => {
             try {
@@ -455,7 +455,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                                 toolName: (tc as any).toolName || (tc as any).name,
                                 toolArgs: (tc as any).args || (tc as any).parameters
                             }
-                        });
+                        }, this.runtime.eventStore);
                     });
                 }
 
@@ -484,7 +484,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                     action: 'DIAGNOSTIC_ALERT',
                     category: 'PERFORMANCE',
                     metadata: { error: frameworkErr.toJSON() }
-                });
+                }, this.runtime.eventStore);
                 
                 throw frameworkErr;
             }
@@ -492,7 +492,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
 
         const result = await resultPromise;
 
-        await this.runtime.pluginRegistry.emitOnLLMResponse(this.card.id, result, result.usage, threadId);
+        await this.runtime.pluginRegistry.emitOnLLMResponse(this.card.id, result, result.usage, threadId, this.runtime);
 
         // Vercel SDK might capture the thrown WorkflowSuspendedError inside toolResults
         if (result.toolResults) {
@@ -509,7 +509,8 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                 threadId,
                 result.modelId || 'unknown',
                 result.usage,
-                result.cost || 0
+                result.cost || 0,
+                this.runtime.eventStore
             );
         }
 
@@ -532,8 +533,8 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
         const wisdom = await this.consultWisdom(optimizedMessages[optimizedMessages.length - 1]?.content || '');
         const enhancedSystemInstruction = `${systemInstruction}${coreMemBlock}\n${Sanitizer.wrapSterile(wisdom, 'LEARNED_WISDOM')}`;
 
-        const modifier = await this.runtime.pluginRegistry.emitBeforeLLMCall(this.card.id, this.llmConfig, optimizedMessages, threadId);
-        await this.runtime.pluginRegistry.emitOnLLMCall(this.card.id, modifier.messages, threadId);
+        const modifier = await this.runtime.pluginRegistry.emitBeforeLLMCall(this.card.id, this.llmConfig, optimizedMessages, threadId, this.runtime);
+        await this.runtime.pluginRegistry.emitOnLLMCall(this.card.id, modifier.messages, threadId, this.runtime);
         
         const result = await this.circuitBreaker.execute(async () => {
             try {
@@ -554,13 +555,13 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                     action: 'DIAGNOSTIC_ALERT',
                     category: 'PERFORMANCE',
                     metadata: { error: frameworkErr.toJSON() }
-                });
+                }, this.runtime.eventStore);
                 
                 throw frameworkErr;
             }
         });
 
-        await this.runtime.pluginRegistry.emitOnLLMResponse(this.card.id, result, result.usage, threadId);
+        await this.runtime.pluginRegistry.emitOnLLMResponse(this.card.id, result, result.usage, threadId, this.runtime);
 
         if (result.usage) {
             TelemetrySystem.emitLLMUsage(
@@ -568,7 +569,8 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                 threadId,
                 result.modelId || 'unknown',
                 result.usage,
-                result.cost || 0
+                result.cost || 0,
+                this.runtime.eventStore
             );
         }
 

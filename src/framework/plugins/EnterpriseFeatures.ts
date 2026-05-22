@@ -1,7 +1,13 @@
 import { AgenticPlugin, CacheHitException, HumanApprovalRequiredException, globalPluginRegistry } from '../core/PluginRegistry.ts';
 import { globalEventStore } from '../core/EventStore.ts';
+import type { EventStore } from '../core/EventStore.ts';
+import type { RuntimeServices } from '../core/RuntimeContext.ts';
 import { TelemetrySystem } from '../telemetry/TelemetrySystem.ts';
 import crypto from 'crypto';
+
+function pluginEventStore(runtime?: RuntimeServices): EventStore {
+    return runtime?.eventStore || globalEventStore;
+}
 
 // 1. Data Loss Prevention (DLP) - Security Governance
 export class DataLossPreventionPlugin implements AgenticPlugin {
@@ -24,12 +30,12 @@ export class DataLossPreventionPlugin implements AgenticPlugin {
         return redacted;
     }
 
-    async beforeAgentExecute(agentId: string, task: any, threadId: string) {
+    async beforeAgentExecute(agentId: string, task: any, threadId: string, runtime?: RuntimeServices) {
         if (typeof task === 'string') return this.redact(task);
         return task;
     }
 
-    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) {
         if (typeof result === 'string') return this.redact(result);
         if (result && typeof result.text === 'string') {
             result.text = this.redact(result.text);
@@ -47,17 +53,17 @@ export class TokenBudgetPlugin implements AgenticPlugin {
 
     constructor(private globalLimit: number = 250000) {}
 
-    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string) {
+    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string, runtime?: RuntimeServices) {
         let b = this.budgets.get(threadId);
         if (b && b.used > b.limit * 0.98) { // 2% buffer for the next call
             throw new Error(`Enterprise Governance: Token quota nearly exhausted (98%+). Halting before next call for thread ${threadId}. Used: ${b.used}, Limit: ${b.limit}`);
         }
     }
 
-    async onLLMResponse(agentId: string, response: any, usage: any, threadId: string) {
+    async onLLMResponse(agentId: string, response: any, usage: any, threadId: string, runtime?: RuntimeServices) {
         if (!usage) return;
         const tokens = (usage.promptTokens || 0) + (usage.completionTokens || 0);
-        
+
         let b = this.budgets.get(threadId);
         if (!b) Object.assign(b = { limit: this.globalLimit, used: 0 });
         b.used += tokens;
@@ -68,7 +74,7 @@ export class TokenBudgetPlugin implements AgenticPlugin {
                 action: 'QUOTA_EXCEEDED',
                 category: 'GOVERNANCE',
                 metadata: { used: b.used, limit: b.limit }
-            });
+            }, pluginEventStore(runtime));
             throw new Error(`Enterprise Governance: Token quota exceeded for thread ${threadId}. Used: ${b.used}, Limit: ${b.limit}`);
         }
     }
@@ -83,10 +89,10 @@ export class SemanticCachePlugin implements AgenticPlugin {
     private readonly ttlMs = Number(process.env.ORCHESTRA_SEMANTIC_CACHE_TTL_MS || 60 * 60 * 1000);
     private readonly maxEntries = Number(process.env.ORCHESTRA_SEMANTIC_CACHE_MAX_ENTRIES || 10000);
 
-    async beforeAgentExecute(agentId: string, task: any, threadId: string) {
+    async beforeAgentExecute(agentId: string, task: any, threadId: string, runtime?: RuntimeServices) {
         const taskStr = typeof task === 'string' ? task : JSON.stringify(task);
         const taskHash = crypto.createHash('sha256').update(agentId + '_' + taskStr).digest('hex');
-        
+
         const entry = this.cache.get(taskHash);
         if (entry && Date.now() < entry.expiresAt) {
             throw new CacheHitException(entry.result);
@@ -97,7 +103,7 @@ export class SemanticCachePlugin implements AgenticPlugin {
         }
     }
 
-    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) {
         const taskStr = typeof task === 'string' ? task : JSON.stringify(task);
         const taskHash = crypto.createHash('sha256').update(agentId + '_' + taskStr).digest('hex');
         this.cache.set(taskHash, { result, expiresAt: Date.now() + this.ttlMs });
@@ -116,15 +122,15 @@ export class AuditTrailPlugin implements AgenticPlugin {
     version = '1.0.0';
     private previousHash = '00000000000000000000000000000000';
 
-    async onToolCalled(agentId: string, toolName: string, args: any, threadId: string) {
+    async onToolCalled(agentId: string, toolName: string, args: any, threadId: string, runtime?: RuntimeServices) {
         const entry = `${Date.now()}|${threadId}|${agentId}|${toolName}|${JSON.stringify(args)}|${this.previousHash}`;
         this.previousHash = crypto.createHash('sha256').update(entry).digest('hex');
-        
+
         TelemetrySystem.emit('SECURE_AUDIT', threadId, {
             action: 'AUDIT_LOG_APPENDED',
             category: 'SECURITY',
             metadata: { hash: this.previousHash, tool: toolName }
-        });
+        }, pluginEventStore(runtime));
     }
 }
 
@@ -132,7 +138,7 @@ export class AuditTrailPlugin implements AgenticPlugin {
 export class MetricsExportPlugin implements AgenticPlugin {
     name = 'MetricsExportPlugin';
     version = '1.0.0';
-    
+
     public static metrics = {
         totalLLMCalls: 0,
         totalTokensUsed: 0,
@@ -145,12 +151,12 @@ export class MetricsExportPlugin implements AgenticPlugin {
 
     private startTimes = new Map<string, number>();
 
-    async beforeAgentExecute(agentId: string, task: any, threadId: string) { 
-        MetricsExportPlugin.metrics.agentExecutions++; 
+    async beforeAgentExecute(agentId: string, task: any, threadId: string, runtime?: RuntimeServices) {
+        MetricsExportPlugin.metrics.agentExecutions++;
         this.startTimes.set(`${threadId}_${agentId}`, Date.now());
     }
 
-    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) {
         const start = this.startTimes.get(`${threadId}_${agentId}`);
         if (start) {
             const lat = Date.now() - start;
@@ -164,7 +170,7 @@ export class MetricsExportPlugin implements AgenticPlugin {
 
     async onToolCalled() { MetricsExportPlugin.metrics.toolInvocations++; }
     async onLLMCall() { MetricsExportPlugin.metrics.totalLLMCalls++; }
-    async onLLMResponse(a: string, r: any, usage: any) { 
+    async onLLMResponse(a: string, r: any, usage: any) {
         if (usage) {
             MetricsExportPlugin.metrics.totalTokensUsed += (usage.promptTokens || 0) + (usage.completionTokens || 0);
         }
@@ -176,7 +182,7 @@ export class GroundednessEvaluatorPlugin implements AgenticPlugin {
     name = 'GroundednessEvaluatorPlugin';
     version = '1.0.0';
 
-    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) {
         if (!result || typeof result !== 'string') return result;
 
         // Note: For a real production system, this would be non-blocking or asynchronous
@@ -184,10 +190,10 @@ export class GroundednessEvaluatorPlugin implements AgenticPlugin {
             // Simulated validation
             const isGrounded = result.length > 0;
             if (!isGrounded) {
-                globalEventStore.append({
-                    type: 'SYSTEM_HOOK', 
-                    sourceAgentId: 'EVALUATOR', 
-                    threadId, 
+                pluginEventStore(runtime).append({
+                    type: 'SYSTEM_HOOK',
+                    sourceAgentId: 'EVALUATOR',
+                    threadId,
                     payload: { action: 'HALLUCINATION_DETECTED' }
                 });
                 console.warn(`[GroundednessGuard] Hallucination detected for agent ${agentId}!!`);
@@ -205,7 +211,7 @@ export class ModelRouterPlugin implements AgenticPlugin {
     name = 'ModelRouterPlugin';
     version = '1.0.0';
 
-    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string) {
+    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string, runtime?: RuntimeServices) {
         let totalTextLength = 0;
         for (const m of messages) {
             if (m.content && typeof m.content === 'string') {
@@ -220,7 +226,7 @@ export class ModelRouterPlugin implements AgenticPlugin {
         } else if (newConfig.provider === 'gemini') {
             newConfig.modelName = 'gemini-1.5-pro';
         }
-        
+
         return { llmConfig: newConfig };
     }
 }
@@ -232,12 +238,12 @@ import { Span, SpanStatusCode } from '@opentelemetry/api';
 export class OpenTelemetryTracingPlugin implements AgenticPlugin {
     name = 'OpenTelemetryTracingPlugin';
     version = '1.0.0';
-    
+
     private agentSpans = new Map<string, { span: Span, startTime: number }>();
     private toolSpans = new Map<string, { span: Span, startTime: number }>();
     private llmSpans = new Map<string, { span: Span, startTime: number }>();
 
-    async beforeAgentExecute(agentId: string, task: any, threadId: string) {
+    async beforeAgentExecute(agentId: string, task: any, threadId: string, runtime?: RuntimeServices) {
         const spanName = `Agent_Execute_${agentId}`;
         const startTime = Date.now();
         const span = globalOTelExporter.getTracer().startSpan(spanName, {
@@ -248,15 +254,15 @@ export class OpenTelemetryTracingPlugin implements AgenticPlugin {
                 'task.length': typeof task === 'string' ? task.length : JSON.stringify(task).length
             }
         });
-        
+
         const spanKey = `${threadId}_${agentId}`;
         this.agentSpans.set(spanKey, { span, startTime });
-        
-        globalEventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'OTEL_TRACER', threadId, payload: { action: 'SPAN_START', spanId: spanKey, agentId } });
+
+        pluginEventStore(runtime).append({ type: 'SYSTEM_HOOK', sourceAgentId: 'OTEL_TRACER', threadId, payload: { action: 'SPAN_START', spanId: spanKey, agentId } });
         return task;
     }
 
-    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) {
         const key = `${threadId}_${agentId}`;
         const spanData = this.agentSpans.get(key);
         if (spanData) {
@@ -266,13 +272,13 @@ export class OpenTelemetryTracingPlugin implements AgenticPlugin {
             span.setAttribute('result.length', typeof result === 'string' ? result.length : JSON.stringify(result).length);
             span.end();
             this.agentSpans.delete(key);
-            
-            globalEventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'OTEL_TRACER', threadId, payload: { action: 'SPAN_END', spanId: key, agentId, durationMs: latency_ms } });
+
+            pluginEventStore(runtime).append({ type: 'SYSTEM_HOOK', sourceAgentId: 'OTEL_TRACER', threadId, payload: { action: 'SPAN_END', spanId: key, agentId, durationMs: latency_ms } });
         }
         return result;
     }
 
-    async onAgentFault(agentId: string, error: any, task: any, threadId: string) {
+    async onAgentFault(agentId: string, error: any, task: any, threadId: string, runtime?: RuntimeServices) {
         const key = `${threadId}_${agentId}`;
         const spanData = this.agentSpans.get(key);
         if (spanData) {
@@ -289,7 +295,7 @@ export class OpenTelemetryTracingPlugin implements AgenticPlugin {
         }
     }
 
-    async beforeToolInvoke(agentId: string, toolName: string, args: any, threadId: string) {
+    async beforeToolInvoke(agentId: string, toolName: string, args: any, threadId: string, runtime?: RuntimeServices) {
         const spanName = `Tool_Invoke_${toolName}`;
         const startTime = Date.now();
         const span = globalOTelExporter.getTracer().startSpan(spanName, {
@@ -301,17 +307,17 @@ export class OpenTelemetryTracingPlugin implements AgenticPlugin {
                 'thread.id': threadId
             }
         });
-        
+
         const key = `${threadId}_${agentId}_${toolName}`;
         this.toolSpans.set(key, { span, startTime });
         return undefined;
     }
 
-    async onToolCalled(agentId: string, toolName: string, args: any, threadId: string) {
+    async onToolCalled(agentId: string, toolName: string, args: any, threadId: string, runtime?: RuntimeServices) {
         // We now wait for afterToolInvoke or onToolFault to end the span
     }
 
-    async afterToolInvoke(agentId: string, toolName: string, args: any, result: any, threadId: string) {
+    async afterToolInvoke(agentId: string, toolName: string, args: any, result: any, threadId: string, runtime?: RuntimeServices) {
         const key = `${threadId}_${agentId}_${toolName}`;
         const spanData = this.toolSpans.get(key);
         if (spanData) {
@@ -328,7 +334,7 @@ export class OpenTelemetryTracingPlugin implements AgenticPlugin {
         }
     }
 
-    async onToolFault(agentId: string, toolName: string, args: any, error: any, threadId: string) {
+    async onToolFault(agentId: string, toolName: string, args: any, error: any, threadId: string, runtime?: RuntimeServices) {
         const key = `${threadId}_${agentId}_${toolName}`;
         const spanData = this.toolSpans.get(key);
         if (spanData) {
@@ -345,7 +351,7 @@ export class OpenTelemetryTracingPlugin implements AgenticPlugin {
         }
     }
 
-    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string) {
+    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string, runtime?: RuntimeServices) {
         const spanName = `LLM_Call_${llmConfig.provider || 'unknown'}`;
         const startTime = Date.now();
         const span = globalOTelExporter.getTracer().startSpan(spanName, {
@@ -362,13 +368,13 @@ export class OpenTelemetryTracingPlugin implements AgenticPlugin {
         return undefined;
     }
 
-    async onLLMResponse(agentId: string, response: any, usage: any, threadId: string) {
+    async onLLMResponse(agentId: string, response: any, usage: any, threadId: string, runtime?: RuntimeServices) {
         const key = `${threadId}_${agentId}`;
         const spanData = this.llmSpans.get(key);
         if (spanData) {
             const { span, startTime } = spanData;
             const latency_ms = Date.now() - startTime;
-            
+
             span.setAttribute('latency_ms', latency_ms);
             span.setAttribute('llm.latency_ms', latency_ms);
             if (usage) {
@@ -401,7 +407,7 @@ export class ZeroTrustRBACPlugin implements AgenticPlugin {
         'thread_admin_123': ['admin']
     };
 
-    async onToolCalled(agentId: string, toolName: string, args: any, threadId: string) {
+    async onToolCalled(agentId: string, toolName: string, args: any, threadId: string, runtime?: RuntimeServices) {
         const requiredRoles = this.policies[toolName];
         if (!requiredRoles) return; // No policy, open access
 
@@ -409,7 +415,7 @@ export class ZeroTrustRBACPlugin implements AgenticPlugin {
         const hasAccess = requiredRoles.some(r => userRoles.includes(r));
 
         if (!hasAccess) {
-            globalEventStore.append({
+            pluginEventStore(runtime).append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'ZERO_TRUST',
                 threadId,
@@ -428,19 +434,19 @@ export class ContinuousAlignmentPlugin implements AgenticPlugin {
 
     private traces = new Map<string, { prompt: any[], response?: any }>();
 
-    async onLLMCall(agentId: string, messages: any[], threadId: string) {
+    async onLLMCall(agentId: string, messages: any[], threadId: string, runtime?: RuntimeServices) {
         const traceId = `${threadId}_${agentId}_${Date.now()}`;
         this.traces.set(traceId, { prompt: messages });
         // In a real system we'd stick this ID somewhere so onLLMResponse could find it
     }
 
-    async onLLMResponse(agentId: string, response: any, usage: any, threadId: string) {
+    async onLLMResponse(agentId: string, response: any, usage: any, threadId: string, runtime?: RuntimeServices) {
         // Collect latest trace for this agent-thread pair
         const recentTraceKey = Array.from(this.traces.keys()).reverse().find(k => k.startsWith(`${threadId}_${agentId}`));
         if (recentTraceKey) {
             const trace = this.traces.get(recentTraceKey)!;
             trace.response = response;
-            
+
             // Format for Direct Preference Optimization (DPO) pipelines
             const dpoRecord = {
                 prompt: JSON.stringify(trace.prompt),
@@ -449,8 +455,8 @@ export class ContinuousAlignmentPlugin implements AgenticPlugin {
                 agent: agentId,
                 timestamp: Date.now()
             };
-            
-            globalEventStore.append({
+
+            pluginEventStore(runtime).append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'RLHF_EXPORTER',
                 threadId,
@@ -469,11 +475,11 @@ export class ShadowModePlugin implements AgenticPlugin {
     // 10% of traffic gets shadowed to a next-gen model without impacting the user
     private shadowProbability = 0.1;
 
-    async beforeAgentExecute(agentId: string, task: any, threadId: string) {
+    async beforeAgentExecute(agentId: string, task: any, threadId: string, runtime?: RuntimeServices) {
         if (Math.random() < this.shadowProbability) {
             console.log(`[ShadowMode] Forking execution of ${agentId} to test V2 experimental prompts in background.`);
-            
-            globalEventStore.append({
+
+            pluginEventStore(runtime).append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'SHADOW_MODE_ROUTER',
                 threadId,
@@ -482,7 +488,7 @@ export class ShadowModePlugin implements AgenticPlugin {
             // Native Node.js background execution
             setTimeout(() => {
                 console.log(`[ShadowMode] Completed background execution for ${agentId} V2.`);
-            }, 500); 
+            }, 500);
         }
         return task;
     }
@@ -496,21 +502,21 @@ export class ContextCompressionPlugin implements AgenticPlugin {
     // Compresses messages if they exceed a specific logical length
     private MAX_LOGICAL_LENGTH = 10000;
 
-    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string) {
+    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string, runtime?: RuntimeServices) {
         let currentLength = messages.reduce((acc, m) => acc + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0);
-        
+
         if (currentLength > this.MAX_LOGICAL_LENGTH) {
             console.warn(`[ContextCompression] Context size ${currentLength} exceeds threshold. Compressing...`);
             // Naive summarization/truncation simulation: keep system prompt + last 5 messages, and summarize the middle
             const systemPrompt = messages.find(m => m.role === 'system');
             const recentMessages = messages.slice(-5);
-            
+
             const compressedMessages = [];
             if (systemPrompt) compressedMessages.push(systemPrompt);
             compressedMessages.push({ role: 'user', content: `[SYSTEM: 100 messages have been compressed into this semantic summary: "The user asked for various data processing tasks, which were mapped and reduced successfully."] `});
             compressedMessages.push(...recentMessages);
 
-            globalEventStore.append({
+            pluginEventStore(runtime).append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'CONTEXT_COMPRESSOR',
                 threadId,
@@ -537,13 +543,13 @@ export class JailbreakDefensePlugin implements AgenticPlugin {
         "developer mode"
     ];
 
-    async beforeAgentExecute(agentId: string, task: any, threadId: string) {
+    async beforeAgentExecute(agentId: string, task: any, threadId: string, runtime?: RuntimeServices) {
         let taskString = typeof task === 'string' ? task : JSON.stringify(task);
         const lowerTask = taskString.toLowerCase();
-        
+
         for (const bad of this.blacklist) {
             if (lowerTask.includes(bad)) {
-                globalEventStore.append({
+                pluginEventStore(runtime).append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: 'JAILBREAK_DEFENSE',
                     threadId,
@@ -563,34 +569,33 @@ export class SelfHealingRetryPlugin implements AgenticPlugin {
 
     private retries = new Map<string, number>();
 
-    async onAgentFault(agentId: string, error: any, task: any, threadId: string) {
+    async onAgentFault(agentId: string, error: any, task: any, threadId: string, runtime?: RuntimeServices) {
         console.warn(`[SelfHealing] Agent ${agentId} failed. Attempting autonomous reflexion...`);
-        
+
             TelemetrySystem.emit('SELF_HEALING_ENGINE', threadId, {
                 action: 'REFLEXION_TRIGGERED',
                 category: 'AGENT_LOGIC',
                 metadata: { agentId, originalError: error.message }
-            });
+            }, pluginEventStore(runtime));
 
         const retryKey = `${threadId}_${agentId}`;
         let currentRetries = this.retries.get(retryKey) || 0;
-        
+
         if (currentRetries < 3) {
             currentRetries++;
             this.retries.set(retryKey, currentRetries);
             console.log(`[SelfHealing] Retrying agent ${agentId} (Attempt ${currentRetries}/3)...`);
-            
-            // We can resolve the agent from the global registry and re-execute
+
             const { globalRegistry } = await import('../agents/AgentRegistry.ts');
-            const agent = globalRegistry.get(agentId);
-            
+            const agent = runtime?.agentRegistry.get(agentId) || globalRegistry.get(agentId);
+
             if (agent) {
                 try {
                     // Let's inject a critique so the LLM knows it failed
-                    const retryTask = typeof task === 'string' 
+                    const retryTask = typeof task === 'string'
                         ? `${task}\n\n[SYSTEM]: Your previous attempt failed with error: ${error.message}. Please try again carefully.`
                         : { ...task, _critique: `Your previous attempt failed with error: ${error.message}` };
-                        
+
                     const result = await agent.execute(retryTask, threadId);
                     if (result && typeof result === 'object') {
                         result._healed = true;
@@ -618,10 +623,10 @@ export class TenantComputeRateLimiterPlugin implements AgenticPlugin {
     // Simulated tenant RPM (Requests per minute) table
     private tenantLimits: Record<string, { rpm: number, calls: number, windowStart: number }> = {};
 
-    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string) {
+    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string, runtime?: RuntimeServices) {
         // Extract tenantId from thread context, default to GLOBAL
-        const tenantId = threadId.split('_')[0] || 'GLOBAL'; 
-        
+        const tenantId = threadId.split('_')[0] || 'GLOBAL';
+
         if (!this.tenantLimits[tenantId]) {
             this.tenantLimits[tenantId] = { rpm: 60, calls: 0, windowStart: Date.now() }; // 60 RPM default
         }
@@ -645,11 +650,11 @@ export class EventStreamerPlugin implements AgenticPlugin {
     name = 'EventStreamerPlugin';
     version = '1.0.0';
 
-    async onToolCalled(agentId: string, toolName: string, args: any, threadId: string) {
+    async onToolCalled(agentId: string, toolName: string, args: any, threadId: string, runtime?: RuntimeServices) {
         this.emitToKafka('tool_executions', { agentId, toolName, args, threadId, timestamp: Date.now() });
     }
 
-    async onLLMResponse(agentId: string, response: any, usage: any, threadId: string) {
+    async onLLMResponse(agentId: string, response: any, usage: any, threadId: string, runtime?: RuntimeServices) {
         this.emitToKafka('llm_responses', { agentId, usage, threadId, timestamp: Date.now() });
     }
 
@@ -667,7 +672,7 @@ export class HumanInTheLoopApprovalPlugin implements AgenticPlugin {
 
     private highRiskTools = ['refund_customer', 'mcp_postgres_query', 'execute_trade', 'send_email'];
 
-    async beforeToolInvoke(agentId: string, toolName: string, args: any, threadId: string) {
+    async beforeToolInvoke(agentId: string, toolName: string, args: any, threadId: string, runtime?: RuntimeServices) {
         if (this.highRiskTools.includes(toolName)) {
             // Check if thread context has a pre-approved token for this execution
             // (We simulate this by checking a special property)
@@ -680,7 +685,7 @@ export class HumanInTheLoopApprovalPlugin implements AgenticPlugin {
             }
 
             const checkpointId = `chkpt_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-            globalEventStore.append({
+            pluginEventStore(runtime).append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'HITL_GATEWAY',
                 threadId,
@@ -697,11 +702,11 @@ export class DataSovereigntyRoutingPlugin implements AgenticPlugin {
     name = 'DataSovereigntyRoutingPlugin';
     version = '1.0.0';
 
-    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string) {
+    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string, runtime?: RuntimeServices) {
         const tenantId = threadId.split('_')[0] || 'GLOBAL';
-        
+
         let newConfig = { ...llmConfig };
-        
+
         // Simulating tenant region mappings
         if (tenantId === 'EU_TENANT') {
             newConfig.region = 'europe-west3';
@@ -725,25 +730,25 @@ export class AgentTrajectoryDistillationPlugin implements AgenticPlugin {
 
     private currentTaskMap = new Map<string, any>();
 
-    async beforeAgentExecute(agentId: string, task: any, threadId: string) {
+    async beforeAgentExecute(agentId: string, task: any, threadId: string, runtime?: RuntimeServices) {
         this.currentTaskMap.set(`${threadId}_${agentId}`, task);
     }
 
-    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) {
         const key = `${threadId}_${agentId}`;
         const inputTask = this.currentTaskMap.get(key) || task;
-        
+
         if (result && !result._healed) { // Only distill completely successful zero-shot trajectories
             const instruction = typeof inputTask === 'string' ? inputTask : JSON.stringify(inputTask);
             const output = typeof result === 'string' ? result : JSON.stringify(result);
-            
+
             // Generate a synthetic instruction-tuning pair (Alpaca/ShareGPT format)
             const fineTuningPair = {
                 instruction: `As an AI agent (${agentId}), solve the following task: ${instruction}`,
                 output: output
             };
 
-            globalEventStore.append({
+            pluginEventStore(runtime).append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'DISTILLATION_PIPELINE',
                 threadId,
@@ -767,9 +772,9 @@ export class SecretManagerPlugin implements AgenticPlugin {
         'STRIPE_LIVE_KEY': 'sk_live_123456789'
     };
 
-    async beforeToolInvoke(agentId: string, toolName: string, args: any, threadId: string) {
+    async beforeToolInvoke(agentId: string, toolName: string, args: any, threadId: string, runtime?: RuntimeServices) {
         if (!args) return;
-        
+
         let argsStr = JSON.stringify(args);
         let mutated = false;
 
@@ -795,19 +800,19 @@ export class FederatedAgentRouterPlugin implements AgenticPlugin {
     name = 'FederatedAgentRouterPlugin';
     version = '1.0.0';
 
-    async beforeAgentExecute(agentId: string, task: any, threadId: string) {
+    async beforeAgentExecute(agentId: string, task: any, threadId: string, runtime?: RuntimeServices) {
         // If the agentId specifies a remote cluster e.g., 'azure_eu_fleet::DataAnalyst'
         if (agentId.includes('::')) {
             const [cluster, remoteAgentId] = agentId.split('::');
             console.log(`[FederationMesh] Routing task to foreign cluster '${cluster}' for agent '${remoteAgentId}'`);
-            
+
             // Simulate gRPC call to external framework (e.g. Autogen or CrewAI cluster)
             const simulatedRemoteResponse = {
                 text: `[REMOTE EXECUTION] Handled by ${remoteAgentId} on cluster ${cluster}. Received payload and computed response.`,
                 _remote: true,
                 cluster
             };
-            
+
             // We can throw CacheHitException as a systemic "shortcut" to abort local LLM processing and return the result.
             // (Re-using CacheHitException is a bit hacky, but acts correctly as an execution short-circuit)
             throw new CacheHitException(simulatedRemoteResponse);
@@ -820,7 +825,7 @@ export class SecureCodeSandboxPlugin implements AgenticPlugin {
     name = 'SecureCodeSandboxPlugin';
     version = '1.0.0';
 
-    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) {
         if (!result || !result.text) return result;
 
         const codeBlockRegex = /```(?:python|javascript|typescript|js|ts|py)\n([\s\S]*?)```/g;
@@ -832,14 +837,14 @@ export class SecureCodeSandboxPlugin implements AgenticPlugin {
             // Simulate sandbox execution
             console.log(`[CodeSandbox] Spinning up ephemeral micro-VM for agent ${agentId}...`);
             const mockStdout = `Execution succeeded. Sandbox duration: ${Math.floor(Math.random() * 50)}ms`;
-            
-            globalEventStore.append({
+
+            pluginEventStore(runtime).append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'CODE_SANDBOX',
                 threadId,
                 payload: { action: 'SANDBOX_EXECUTED', codeLength: sourceCode.length, stdout: mockStdout }
             });
-            
+
             executions.push({
                 snippetLength: sourceCode.length,
                 stdout: mockStdout
@@ -850,7 +855,7 @@ export class SecureCodeSandboxPlugin implements AgenticPlugin {
             result._sandbox_executions = executions;
             result.text += `\n\n[SYSTEM]: Automatically executed ${executions.length} code snippets in Sandbox.`;
         }
-        
+
         return result;
     }
 }
@@ -860,7 +865,7 @@ export class MultimodalIngestionPlugin implements AgenticPlugin {
     name = 'MultimodalIngestionPlugin';
     version = '1.0.0';
 
-    async beforeAgentExecute(agentId: string, task: any, threadId: string) {
+    async beforeAgentExecute(agentId: string, task: any, threadId: string, runtime?: RuntimeServices) {
         let taskStr = typeof task === 'string' ? task : JSON.stringify(task);
 
         // Detect mentions of images or standard multimodal attachments
@@ -869,8 +874,8 @@ export class MultimodalIngestionPlugin implements AgenticPlugin {
 
         if (matches && matches.length > 0) {
             console.log(`[MultiModal] Detected ${matches.length} visual artifacts. Firing up distributed OCR / CLIP embeddings...`);
-            
-            globalEventStore.append({
+
+            pluginEventStore(runtime).append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'MULTIMODAL_INGESTION',
                 threadId,
@@ -894,19 +899,19 @@ export class FinOpsChargebackPlugin implements AgenticPlugin {
         'sales': { currentSpend: 0, maxBudget: 10.00 }
     };
 
-    async onLLMResponse(agentId: string, response: any, usage: any, threadId: string) {
+    async onLLMResponse(agentId: string, response: any, usage: any, threadId: string, runtime?: RuntimeServices) {
         if (!usage) return;
-        
+
         // Extract department from thread context (Simulated)
-        const department = threadId.split('_')[1] || 'eng'; 
-        
+        const department = threadId.split('_')[1] || 'eng';
+
         // Approximate cost calculation (Simulate $0.01 per 1k input tokens, $0.03 per 1k output tokens)
         const cost = ((usage.promptTokens || 0) / 1000) * 0.01 + ((usage.completionTokens || 0) / 1000) * 0.03;
-        
+
         if (this.departmentBudgets[department]) {
             this.departmentBudgets[department].currentSpend += cost;
-            
-            globalEventStore.append({
+
+            pluginEventStore(runtime).append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'FINOPS_ENGINE',
                 threadId,
@@ -926,13 +931,13 @@ export class MoAConsensusPlugin implements AgenticPlugin {
     name = 'MoAConsensusPlugin';
     version = '1.0.0';
 
-    async beforeAgentExecute(agentId: string, task: any, threadId: string) {
+    async beforeAgentExecute(agentId: string, task: any, threadId: string, runtime?: RuntimeServices) {
         // Only trigger for highly critical tasks requiring consensus
         const isCritical = typeof task === 'string' && task.toLowerCase().includes('critical consensus');
         if (isCritical) {
             console.log(`[MoA Consensus] Task flagged as critical. Spawning virtual sub-agents for debate...`);
-            
-            globalEventStore.append({
+
+            pluginEventStore(runtime).append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'MOA_ROUTER',
                 threadId,
@@ -958,7 +963,7 @@ export class ExplainableAIPlugin implements AgenticPlugin {
     name = 'ExplainableAIPlugin';
     version = '1.0.0';
 
-    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) {
         if (!result || !result.text) return result;
 
         // In a real scenario, this would trace vector distance scores and attention weights
@@ -971,7 +976,7 @@ export class ExplainableAIPlugin implements AgenticPlugin {
             reasoningTrace: "Inferred intent from graph dependencies and cross-referenced with policy HR-104."
         };
 
-        globalEventStore.append({
+        pluginEventStore(runtime).append({
             type: 'SYSTEM_HOOK',
             sourceAgentId: 'XAI_ENGINE',
             threadId,
@@ -988,14 +993,14 @@ export class BlockchainAuditTrailPlugin implements AgenticPlugin {
     name = 'BlockchainAuditTrailPlugin';
     version = '1.0.0';
 
-    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) {
         if (!result || typeof result.text !== 'string') return result;
 
         // Cryptographically sign the decision
         const payloadToSign = `${agentId}:${threadId}:${result.text}:${Date.now()}`;
         const hash = crypto.createHash('sha256').update(payloadToSign).digest('hex');
 
-        globalEventStore.append({
+        pluginEventStore(runtime).append({
             type: 'SYSTEM_HOOK',
             sourceAgentId: 'IMMUTABLE_AUDIT',
             threadId,
@@ -1016,7 +1021,7 @@ export class CircuitBreakerPlugin implements AgenticPlugin {
     private circuitOpen = false;
     private lastFailureTime = 0;
 
-    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string) {
+    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string, runtime?: RuntimeServices) {
         if (this.circuitOpen) {
             if (Date.now() - this.lastFailureTime > 30000) { // Half-open after 30s
                 this.circuitOpen = false;
@@ -1029,7 +1034,7 @@ export class CircuitBreakerPlugin implements AgenticPlugin {
         }
     }
 
-    async onAgentFault(agentId: string, error: any, task: any, threadId: string) {
+    async onAgentFault(agentId: string, error: any, task: any, threadId: string, runtime?: RuntimeServices) {
         if (error.message && (error.message.includes('500') || error.message.includes('timeout') || error.message.includes('overloaded'))) {
             this.failureCount++;
             if (this.failureCount >= 3) {
@@ -1049,7 +1054,7 @@ export class StructuredOutputEnforcerPlugin implements AgenticPlugin {
     version = '1.0.0';
     failureMode = 'fail-closed' as const;
 
-    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) {
         if (task && task.expectedSchema) {
             // Very naive JSON parsing attempt
             try {
@@ -1059,7 +1064,7 @@ export class StructuredOutputEnforcerPlugin implements AgenticPlugin {
                     const cleanStr = parsed.replace(/```json\n?/g, '').replace(/```/g, '').trim();
                     parsed = JSON.parse(cleanStr);
                 }
-                
+
                 // If it parses, we assume it loosely matches the schema for this simulation
                 if (result && typeof result === 'object') {
                     result.structuredData = parsed;
@@ -1068,7 +1073,7 @@ export class StructuredOutputEnforcerPlugin implements AgenticPlugin {
                 console.log(`[OutputEnforcer] Successfully enforced structured JSON output for agent ${agentId}`);
             } catch (e) {
                 console.error(`[OutputEnforcer] Agent ${agentId} failed to produce valid JSON matching schema.`);
-                globalEventStore.append({
+                pluginEventStore(runtime).append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: 'SCHEMA_GUARD',
                     threadId,
@@ -1087,25 +1092,25 @@ export class AutoPromptOptimizerPlugin implements AgenticPlugin {
     name = 'AutoPromptOptimizerPlugin';
     version = '1.0.0';
 
-    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string) {
+    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string, runtime?: RuntimeServices) {
         // Find system prompt and dynamically inject optimization patterns
         const systemMsgIndex = messages.findIndex(m => m.role === 'system');
         if (systemMsgIndex !== -1) {
             let content = messages[systemMsgIndex].content;
-            
+
             // Inject Chain of Thought + Few Shot signatures dynamically
             content += `\n\n[Optimization]: Think step-by-step before answering. Ensure your response is strictly grounded in the provided context. Follow rigorous logical deduction.`;
-            
+
             const optimizedMessages = [...messages];
             optimizedMessages[systemMsgIndex] = { ...messages[systemMsgIndex], content };
 
-            globalEventStore.append({
+            pluginEventStore(runtime).append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'DSPY_OPTIMIZER',
                 threadId,
                 payload: { action: 'PROMPT_COMPILED', lengthDelta: `+${content.length - messages[systemMsgIndex].content.length} chars` }
             });
-            
+
             return { messages: optimizedMessages };
         }
     }
@@ -1116,12 +1121,12 @@ export class SLAEnforcerPlugin implements AgenticPlugin {
     name = 'SLAEnforcerPlugin';
     version = '1.0.0';
     failureMode = 'fail-closed' as const;
-    
+
     private maxExecutionMs = 45000; // 45 seconds SLA
 
     private slas = new Map<string, number>();
 
-    async beforeAgentExecute(agentId: string, task: any, threadId: string) {
+    async beforeAgentExecute(agentId: string, task: any, threadId: string, runtime?: RuntimeServices) {
         // We set up a conceptual timeout guard.
         // In Node, we can't easily kill async promises from the outside generically without AbortController passing,
         // but we can log SLA breaches.
@@ -1129,13 +1134,13 @@ export class SLAEnforcerPlugin implements AgenticPlugin {
         this.slas.set(`${threadId}_${agentId}`, start);
     }
 
-    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) {
         const start = this.slas.get(`${threadId}_${agentId}`) || Date.now();
         const duration = Date.now() - start;
         this.slas.delete(`${threadId}_${agentId}`);
         if (duration > this.maxExecutionMs) {
             console.warn(`[SLA Enforcer] Agent ${agentId} breached SLA. Duration: ${duration}ms, Max allowed: ${this.maxExecutionMs}ms`);
-            globalEventStore.append({
+            pluginEventStore(runtime).append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'SLA_WATCHDOG',
                 threadId,
@@ -1154,10 +1159,10 @@ export class DurableExecutionPlugin implements AgenticPlugin {
     name = 'DurableExecutionPlugin';
     version = '1.0.0';
 
-    async onWorkflowSleep(threadId: string, state: any) {
+    async onWorkflowSleep(threadId: string, state: any, runtime?: RuntimeServices) {
         // Serialize agent state to database when waiting for HITL or external APIs
         console.log(`[DurableExecution] Serializing workflow state for Thread [${threadId}] to durable backend (key-value/Postgres). State size: ${JSON.stringify(state).length} bytes`);
-        globalEventStore.append({
+        pluginEventStore(runtime).append({
             type: 'SYSTEM_HOOK',
             sourceAgentId: 'TEMPORAL_WORKER',
             threadId,
@@ -1166,10 +1171,10 @@ export class DurableExecutionPlugin implements AgenticPlugin {
         // Simulated: await stateBackend.set(`orchestra_state_${state.approvalId}`, JSON.stringify(state));
     }
 
-    async onWorkflowResume(threadId: string, state: any) {
+    async onWorkflowResume(threadId: string, state: any, runtime?: RuntimeServices) {
         // Rehydrate agent state upon resumption
         console.log(`[DurableExecution] Rehydrating workflow state for Thread [${threadId}] from durable database.`);
-        globalEventStore.append({
+        pluginEventStore(runtime).append({
             type: 'SYSTEM_HOOK',
             sourceAgentId: 'TEMPORAL_WORKER',
             threadId,
@@ -1188,7 +1193,7 @@ export class AutoReflectionCriticPlugin implements AgenticPlugin {
 
     private reflectionAttempts = new Map<string, number>();
 
-    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string, runtime?: RuntimeServices) {
         if (!result || typeof result.text !== 'string') return result;
 
         // Only evaluate if it's potentially code or structured response
@@ -1210,26 +1215,26 @@ export class AutoReflectionCriticPlugin implements AgenticPlugin {
             }
 
             // 2. Simulated static logic analysis by CriticAgent
-            if (!hasFlaws && Math.random() < 0.3) { 
+            if (!hasFlaws && Math.random() < 0.3) {
                 hasFlaws = true;
                 criticFeedback = `CriticAgent: Found potential logic flaw in edge case handling. Update code to be more robust.`;
             }
 
             if (hasFlaws && attempt < this.maxRetries) {
                 console.warn(`[AutoReflection] CriticAgent rejected execution for agent ${agentId}. Feedback: ${criticFeedback}. Triggering self-healing loop (Attempt ${attempt + 1}/${this.maxRetries})...`);
-                
+
                 TelemetrySystem.emit('CRITIC_AGENT', threadId, {
                     action: 'CRITIQUE_FAILED',
                     category: 'AGENT_LOGIC',
                     metadata: { attempt: attempt + 1, feedback: criticFeedback }
-                });
+                }, pluginEventStore(runtime));
 
                 // Simulate retry via orchestration by modifying the current result to a "CacheHitException" style synthetic response
                 // In a true framework, we would throw an error or instruction to cause Orchestrator to re-invoke the agent.
                 // For this simulation, we'll append the critic's intervention:
-                
+
                 this.reflectionAttempts.set(attemptKey, attempt + 1);
-                
+
                 // Simulate the Worker agent fixing the issue
                 const healedResult = {
                     ...result,
@@ -1247,8 +1252,8 @@ export class AutoReflectionCriticPlugin implements AgenticPlugin {
             }
             this.reflectionAttempts.delete(attemptKey);
         }
-        
-        return result; 
+
+        return result;
     }
 }
 
@@ -1287,7 +1292,7 @@ export function registerEnterpriseFeatures() {
         globalPluginRegistry.register(new SecureCodeSandboxPlugin());
     }
     registerExperimental(new MultimodalIngestionPlugin());
-    
+
     // New cutting-edge plugins
     registerExperimental(new FinOpsChargebackPlugin());
     registerExperimental(new MoAConsensusPlugin());
@@ -1299,6 +1304,6 @@ export function registerEnterpriseFeatures() {
     globalPluginRegistry.register(new SLAEnforcerPlugin());
     globalPluginRegistry.register(new DurableExecutionPlugin());
     registerExperimental(new AutoReflectionCriticPlugin());
-    
+
     console.log('[Orchestra Enterprise] All Governance modules loaded successfully.');
 }

@@ -1,4 +1,4 @@
-import { globalEventStore } from '../core/EventStore.ts';
+import { EventStore, globalEventStore } from '../core/EventStore.ts';
 import { TelemetryPayload } from '../core/types.ts';
 import { globalOTelExporter } from './OTelExporter.ts';
 import { Span, SpanStatusCode } from '@opentelemetry/api';
@@ -73,10 +73,11 @@ export class TelemetrySystem {
     public static emit(
         sourceAgentId: string,
         threadId: string,
-        payload: TelemetryPayload
+        payload: TelemetryPayload,
+        eventStore: EventStore = globalEventStore
     ) {
         if (this.isDisabled) return;
-        globalEventStore.append({
+        eventStore.append({
             type: 'TELEMETRY_EMIT',
             sourceAgentId,
             threadId,
@@ -92,7 +93,8 @@ export class TelemetrySystem {
         threadId: string,
         modelId: string,
         usage: { promptTokens: number; completionTokens: number; totalTokens: number },
-        cost: number
+        cost: number,
+        eventStore?: EventStore
     ) {
         this.emit(sourceAgentId, threadId, {
             action: 'LLM_USAGE_RECORDED',
@@ -104,7 +106,7 @@ export class TelemetrySystem {
                 cost_estimate: cost
             },
             metadata: { modelId }
-        });
+        }, eventStore);
     }
 
     /**
@@ -114,7 +116,8 @@ export class TelemetrySystem {
         sourceAgentId: string,
         threadId: string,
         serviceName: string,
-        cost: number
+        cost: number,
+        eventStore?: EventStore
     ) {
         this.emit(sourceAgentId, threadId, {
             action: 'SERVICE_COST_RECORDED',
@@ -123,7 +126,7 @@ export class TelemetrySystem {
                 cost_estimate: cost
             },
             metadata: { serviceName }
-        });
+        }, eventStore);
     }
 
     /**
