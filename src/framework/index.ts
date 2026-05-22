@@ -28,6 +28,8 @@ export { EventStore, globalEventStore } from './core/EventStore.ts';
 export type { EventStoreOptions } from './core/EventStore.ts';
 
 export { globalToolRegistry, ToolRegistry } from './tools/ToolRegistry.ts';
+export { ToolProviderRegistry, globalToolProviders } from './tools/ToolProviders.ts';
+export type { DatabaseQueryProvider, RagSearchProvider, RagSearchResult, ToolProviderContext, ToolProviderSet, WebSearchProvider, WebSearchResult } from './tools/ToolProviders.ts';
 export { PluginRegistry, CacheHitException, HumanApprovalRequiredException, globalPluginRegistry } from './core/PluginRegistry.ts';
 export type { AgenticPlugin } from './core/PluginRegistry.ts';
 export { PolicyEngine, globalPolicyEngine } from './governance/PolicyEngine.ts';

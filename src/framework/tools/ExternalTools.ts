@@ -5,6 +5,9 @@ import { randomUUID } from 'crypto';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { globalToolRegistry } from './ToolRegistry.ts';
+import { globalToolProviders } from './ToolProviders.ts';
+import type { ToolProviderContext } from './ToolProviders.ts';
+import type { ExecutionContext } from '../core/ExecutionContext.ts';
 
 const workspaceRoot = path.resolve(process.cwd(), 'workspace');
 const execAsync = promisify(exec);
@@ -25,6 +28,21 @@ const ensureToolEnabled = (toolName: string): ToolMode => {
         throw new Error(`Tool ${toolName} is disabled by ORCHESTRA_TOOL_${toolName.toUpperCase()}_MODE/ORCHESTRA_TOOL_MODE.`);
     }
     return mode;
+};
+
+const toToolProviderContext = (context: ExecutionContext): ToolProviderContext => ({
+    tenantId: context.tenantId,
+    agentId: context.agentId,
+    threadId: context.threadId,
+    capabilities: context.capabilities,
+    taskId: context.taskId,
+    leaseId: context.leaseId,
+    idempotencyKey: context.idempotencyKey
+});
+
+const stringifyToolProviderResult = (result: unknown): string => {
+    if (typeof result === 'string') return result;
+    return JSON.stringify(result);
 };
 
 const assertExternalUrlAllowed = (rawUrl: string) => {
@@ -100,10 +118,15 @@ globalToolRegistry.register(
         query: z.string().describe('The search query or keywords.'),
         numResults: z.number().optional().describe('Number of results to return (default 3)')
     }),
-    async ({ query, numResults = 3 }) => {
+    async ({ query, numResults = 3 }, context) => {
         const mode = ensureToolEnabled('webSearch');
         if (mode === 'live') {
-            throw new Error('webSearch live mode requires a configured search provider. Set this tool to mock mode or add a search provider integration.');
+            const provider = (context.runtime?.toolProviders || globalToolProviders).getWebSearchProvider();
+            if (!provider) {
+                throw new Error('webSearch live mode requires a registered WebSearchProvider. Set this tool to mock mode or register a provider in RuntimeContext.toolProviders.');
+            }
+            const results = await provider.search(query, { numResults }, toToolProviderContext(context));
+            return JSON.stringify(results.slice(0, numResults));
         }
 
         return JSON.stringify([
@@ -278,14 +301,18 @@ globalToolRegistry.register(
     z.object({
         query: z.string().describe('The query string to execute')
     }),
-    async ({ query }) => {
+    async ({ query }, context) => {
         const mode = ensureToolEnabled('databaseQuery');
         if (query.toLowerCase().includes('drop table') || query.toLowerCase().includes('truncate')) {
              throw new Error('Sandbox Security Violation: Destructive database operations are prohibited via this agentic interface.');
         }
 
         if (mode === 'live') {
-            throw new Error('databaseQuery live mode requires a database adapter. Keep this tool in mock mode until a DB connector is configured.');
+            const provider = (context.runtime?.toolProviders || globalToolProviders).getDatabaseQueryProvider();
+            if (!provider) {
+                throw new Error('databaseQuery live mode requires a registered DatabaseQueryProvider. Keep this tool in mock mode or register a provider in RuntimeContext.toolProviders.');
+            }
+            return stringifyToolProviderResult(await provider.query(query, toToolProviderContext(context)));
         }
 
         return `[MOCK Database Result]: 3 rows returned successfully (query sanitized).`;
@@ -300,10 +327,14 @@ globalToolRegistry.register(
         contextQuery: z.string().describe('The concept or semantic question to search for'),
         namespace: z.string().optional().describe('Optional namespace like "codebase", "company-docs", etc.')
     }),
-    async ({ contextQuery, namespace }) => {
+    async ({ contextQuery, namespace }, context) => {
         const mode = ensureToolEnabled('ragSearch');
         if (mode === 'live') {
-            throw new Error('ragSearch live mode requires a vector database or MemoryMesh-backed retrieval adapter.');
+            const provider = (context.runtime?.toolProviders || globalToolProviders).getRagSearchProvider();
+            if (!provider) {
+                throw new Error('ragSearch live mode requires a registered RagSearchProvider. Keep this tool in mock mode or register a provider in RuntimeContext.toolProviders.');
+            }
+            return JSON.stringify(await provider.search(contextQuery, { namespace }, toToolProviderContext(context)));
         }
 
         // M5 Remediation: Higher semantic threshold simulation

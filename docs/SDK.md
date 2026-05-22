@@ -87,6 +87,35 @@ tools.register(
 
 For high-risk tools, set `highRisk: true` so human approval can guard execution.
 
+## Plug In Tool Providers
+
+Built-in tools such as `webSearch`, `databaseQuery`, and `ragSearch` stay in mock mode by default. In live mode, pass provider adapters through the runtime instead of editing framework files.
+
+```typescript
+import { Orchestrator, ToolProviderRegistry } from '../src/framework/index.ts';
+
+const toolProviders = new ToolProviderRegistry({
+  webSearch: {
+    async search(query, options, context) {
+      return [
+        {
+          title: `Result for ${query}`,
+          url: 'https://example.com/result',
+          snippet: `Tenant ${context.tenantId}, limit ${options.numResults}`
+        }
+      ];
+    }
+  }
+});
+
+const orchestrator = new Orchestrator({
+  tenantId: 'demo',
+  toolProviders
+});
+```
+
+This keeps live integrations replaceable. Use `ORCHESTRA_TOOL_WEBSEARCH_MODE=live`, `ORCHESTRA_TOOL_DATABASEQUERY_MODE=live`, or `ORCHESTRA_TOOL_RAGSEARCH_MODE=live` only after registering the matching provider.
+
 ## Swap State Backends
 
 Use the `StateAdapter` contract when you need durable or distributed state. The default is in-memory for local development.
